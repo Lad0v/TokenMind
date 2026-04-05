@@ -1,0 +1,425 @@
+Техническое задание
+на разработку платформы токенизации
+объектов интеллектуальной собственности
+Проект: веб-платформа для верификации правообладателей, токенизации IP-активов и их размещения на маркетплейсе с расчётами в Solana
+Заказчик / продукт	Концепт MVP / Product & Engineering brief
+Формат документа	Техническое задание
+Версия	v2.2 (обновлено 04.04.2026)
+Дата	04.04.2026
+
+Назначение документа
+Документ описывает целевую архитектуру, требования к базе данных, backend и frontend-слоям, интеграциям, сценариям работы пользователей, а также ограничения MVP для платформы токенизации объектов интеллектуальной собственности. Документ предназначен как исходная база для проектирования, декомпозиции задач и подготовки roadmap разработки.
+
+================================================================================
+                         СТАТУС РЕАЛИЗАЦИИ
+================================================================================
+
+✅ РЕАЛИЗОВАНО (MVP v2.3 — Backend, 05.04.2026):
+  - Identity & Access (регистрация, JWT, OTP Redis-based, роли, login, refresh, logout, password-reset)
+  - User Profile & Verification (профиль, загрузка документов ID + selfie, review workflow)
+  - Admin User Management (CRUD, статус, роли, soft-delete, пагинация, поиск по email/name)
+  - Admin Patent Management (просмотр, статус, пагинация, фильтрация, аудит изменений)
+  - IP Check & Precheck (проверка патента через USPTO v2.3 / PatentsView)
+  - IP Claims (CRUD заявок, документы, review workflow)
+  - IP Intelligence Module (кэш, обогащение, международный поиск, рекомендации по токенизации)
+  - USPTO Integration v2.3 (grants + applications fallback, continuity endpoint, retry, rate-limit)
+  - Audit Logging (audit_logs, webhook_events)
+  - Database (PostgreSQL/SQLite, Alembic миграции — 3 миграции)
+  - Тесты (50 тестов: patent_clients + ip_intel, pytest + respx)
+  - Документация (архитектура, API для фронтенда, тесты)
+
+⛔ НЕ ОТНОСИТСЯ К БЭКЕНДУ (внешняя система / отдельная команда):
+  - Solana Integration (mint, settlement, on-chain data) — внешний блок, бэкенд не участвует
+  - Marketplace (витрина, ордера, покупка токенов за SOL) — внешний блок
+  - Tokenization (выпуск токенов, supply, treasury) — внешний блок
+  - Dividend System (фиксированные выплаты, предупреждения, закрытие) — внешний блок
+
+⚠️ БЭКЕНД ЧАСТИЧНО УЧАСТВУЕТ (планируется):
+  - KYC Provider Integration (webhook-эндпоинты на нашей стороне, провайдер — внешний)
+  - Frontend (Next.js App Router) — отдельный репозиторий, бэкенд только API
+  - SMS OTP Provider (STUB, планируется Firebase Auth / MSG91 / Vonage)
+  - S3/MinIO File Storage (config vars есть, интеграция не завершена)
+
+================================================================================
+
+ 
+1. Цели и границы проекта
+•	Создать веб-платформу, на которой правообладатель может зарегистрироваться, пройти идентификацию, подтвердить связь с объектом интеллектуальной собственности и инициировать токенизацию актива.
+•	Обеспечить выпуск токенизированного актива в сети Solana после прохождения проверок и внутреннего approval workflow.
+•	Предоставить маркетплейс, на котором инвесторы могут просматривать активы , проходить onboarding и покупать токены за SOL.
+•	Соблюдать принцип: чувствительные действия (токенизация, покупка, листинг, вывод средств) доступны только после обязательных compliance-проверок; KYC может быть необязательным на этапе просмотра и предварительной подачи заявки, но не на этапе выпуска и торговли.
+•	KYC и верифицировании нужно только при подаче на патент
+•	Монетизация происходит через комисии с операций покупки токенов
+•	Профит для владельцов патентов получать первичные инвестиции
+•	Профит для инвесторов от дивидентов(дивиденты фиксированные и обязательно платиться с кошелька патентова )
+•	Будут фиксированное длинны временный выплат дивидентов и обязательно выплачиваються с кошелька владельца патента, если не получаються выплаты то идет система предупржедений
+•	Если более 2 предупреждений то проект закрываеться и все дивиденты возращаються
+2. Предположения и ограничения
+•	Проект стартует как MVP с упором на один тип объектов: патенты США.
+•	Проверка патента выполняется через внешние API и реестры USPTO; юридическое решение о допустимости токенизации подтверждается внутренним manual review.
+•	Персональные данные, изображения документов и результаты KYC не размещаются on-chain.
+•	On-chain слой хранит только необходимые данные о выпуске токена, адресах mint/account и результатах транзакций.
+•	Платформа проектируется как permissioned marketplace: выпуск и покупка активов контролируются backend-логикой и compliance-правилами.
+3. Роли пользователей и доступ
+Роль	Описание	Разрешённые действия
+Guest	Неавторизованный посетитель	Просмотр витрины, FAQ, карточек активов в публичной части
+User	Зарегистрированный пользователь 	Профиль, подключение кошелька, черновик заявки на IP,просмотр активов, покупка токенов, управление портфелем
+Issuer	Правообладатель / заявитель	Подача IP, загрузка документов, прохождение KYC, запуск токенизации после approval
+
+
+Admin	Администратор платформы	Управление пользователями, активами, листингом, системными настройками, Ручной review KYC/IP, approval/reject, audit log
+
+4. Функциональные блоки платформы
+4.1. Identity & Access
+Регистрация, авторизация, phone\otp verification, роли, управление сессиями, привязка wallet address.
+4.2. KYC / Compliance
+Запуск и мониторинг KYC-процесса, получение webhook-результатов, sanctions/risk screening, ручной review спорных кейсов.
+4.3. IP Verification
+Подача: patent number; ФИО; адресс; удостверение pdf; видеокружоек, запрос к USPTO API, сопоставление с данными заявителя, проверка supporting documents, решение о допустимости токенизации.
+4.4. Asset Management
+Создание карточки актива, хранение метаданных, статусов, юридических документов, состава выпуска, параметров токенизации.
+4.5. Tokenization
+Mint токена в сети Solana, настройка supply, treasury и адресов хранения, привязка on-chain сущностей к off-chain записям актива.
+4.6. Marketplace
+Листинг активов, размещение офферов, покупка токенов за SOL, контроль допустимости сделки и пост-обработка settlement.
+4.7. Admin & Audit
+Панели управления, отчётность, хронология действий, журнал ошибок, экспорт данных и мониторинг интеграций.Создание карточки актива, хранение метаданных, статусов, юридических документов, состава выпуска, параметров токенизации.
+5. Основные пользовательские сценарии
+
+5.1. Сценарий Пользователя
+1.	Привязка кошелька — ⛔ ВНЕШНИЙ БЛОК (не на стороне бэкенда)
+
+5.2 Сценарий правообладателя (issuer)
+2.	Заполнение профиля. ✅
+3.	Подача patent number и базовых данных по объекту. ✅
+4.	Предварительная автоматическая проверка по USPTO. ✅
+5.	Прохождение KYC и загрузка supporting documents. ⚠️ Частично (загрузка документов ✅, KYC provider — внешний)
+6.	Ручной review специалистом compliance/legal. ⚠️ Частично (ip_review модель ✅, UI — фронтенд)
+7.	Одобрение заявки и выпуск токена в Solana. ⛔ ВНЕШНИЙ БЛОК (токенизация не на нашей стороне)
+
+5.3. Сценарий инвестора
+2.	Просмотр витрины активов и карточек размещений. ⛔ ВНЕШНИЙ БЛОК (marketplace)
+3.	Покупка токенов за SOL. ⛔ ВНЕШНИЙ БЛОК (Solana integration)
+4.	Отображение позиций в портфеле и истории операций. ⛔ ВНЕШНИЙ БЛОК
+
+5.4. Сценарий Admin
+5.	Получение очереди кейсов KYC/IP review. ⚠️ Частично (модели ✅, API для review ✅, UI — фронтенд)
+6.	Просмотр досье пользователя и объекта IP. ⚠️ Частично (API ✅, UI — фронтенд)
+7.	Вынесение решения: approve / reject / request more data. ✅
+8.	Формирование причин отказа и комментариев в audit log. ✅
+9.	Управление пользователями ✅ РЕАЛИЗОВАНО (admin CRUD для users — v2)
+10.	Управление патентами ✅ РЕАЛИЗОВАНО (admin CRUD для patents — v2)
+6. Архитектура базы данных
+Рекомендуемая СУБД: PostgreSQL (MVP допускает SQLite через aiosqlite). Доступ к данным — через SQLAlchemy 2.0 Async ORM с миграциями Alembic. Для документов и вложений используется отдельное объектное хранилище (S3-compatible storage на продакшене, локальная папка uploads/ в разработке).
+
+6.1. Таблицы (логические группы)
+
+Домен пользователей (app/models/user.py)
+• users — основная модель: id (UUID PK), email (unique, indexed), password_hash (nullable для инвесторов), role (enum: user/issuer/investor/compliance_officer/admin), status (enum: pending_otp/active/suspended/blocked/rejected)
+• profiles — профиль пользователя: user_id (PK, FK → users.id), full_name, country, organization_name, preferred_language
+• kyc_cases — KYC-кейсы: id (UUID PK), user_id (FK), provider, provider_case_id, status (enum KYCCaseStatus), risk_level (enum KYCRiskLevel), webhook payloads
+• wallet_links — привязка кошельков: id (UUID PK), user_id, wallet_address, network (Solana), is_primary. UniqueConstraint(wallet_address, network)
+• otp_codes — OTP-коды: id (UUID PK), user_id, code (6 цифр), purpose, is_used, expires_at
+• verification_cases — верификация для patent submitters: id (UUID PK), user_id, patent_name, patent_address, user_address, id_document_url, selfie_url, status, reviewer_notes
+
+Домен патентов (app/models/patent.py)
+• patents — патенты: id (UUID PK), owner_user_id (FK → users.id), patent_number, jurisdiction, title, abstract, status (enum: draft/submitted/prechecked/under_review/approved/rejected/archived)
+• patent_documents — документы патента: id (UUID PK), patent_id (FK), document_type, storage_key, created_by_user_id
+• patent_reviews — рецензии: id (UUID PK), patent_id (FK), reviewer_user_id (FK), decision (enum ReviewDecision), notes, reviewed_at
+
+Домен IP-claims (app/models/ip_claim.py)
+• ip_claims — заявки на IP: id (UUID PK), issuer_user_id (FK), patent_number, patent_title, claimed_owner_name, description, jurisdiction, status (enum: draft/submitted/prechecked/awaiting_kyc/under_review/approved/rejected), prechecked (bool), precheck_status, source_id, checked_at, patent_metadata (JSON), external_metadata (JSON)
+• ip_documents — документы заявки: id (UUID PK), ip_claim_id (FK), file_url, doc_type, created_by_user_id
+• ip_reviews — рецензии на claims: id (UUID PK), ip_claim_id (FK), reviewer_id (FK), decision (enum: approve/reject/request_more_data), notes
+• token_revocations — отозванные токены: jti (PK), token_type, expires_at, revoked_at
+
+Кэш IP Intelligence (app/models/ip_intel.py)
+• patent_cache — кэш патентных данных: id (UUID PK), source (enum: USPTO/PATENTSVIEW/EPO_OPS/WIPO_PCT), source_id, country_code, patent_number, kind_code, title, abstract, filing_date, publication_date, grant_date, status, JSON-поля (assignees, inventors, cpc_classes, uspc_classes, ipc_classes, geo_data, family_ids, raw_data), cached_at, expires_at, ip_claim_id (FK)
+• patent_search_cache — кэш поисковых запросов: id (UUID PK), query_hash (SHA256, indexed), query_text, countries, date_from, date_to, results (JSON), total_count, sources_queried, cached_at, expires_at
+
+Общие таблицы (app/models/common.py)
+• audit_logs — аудит действий: id (UUID PK), actor_id (FK → users.id, nullable), action, entity_type, entity_id, payload (JSON без PII), created_at
+• webhook_events — входящие вебхуки: id (UUID PK), source, external_id, status (enum: received/processed/failed/dead_letter), payload (JSON), created_at, updated_at
+
+Аналитика (app/models/analytics.py)
+• user_metrics_daily — ежедневные метрики: date (PK), total_users, new_users, active_users, kyc_started, kyc_approved
+• patent_metrics_daily — метрики патентов: date (PK), total_patents, new_patents, patents_under_review, patents_approved, patents_rejected
+• kyc_funnel_stats — KYC воронка: composite PK (period_start, period_end, step_name), step_name (enum KYCFunnelStep), users_count
+
+6.2. Логические связи
+• Один пользователь имеет одну запись users, один профиль profiles и несколько кошельков в wallet_links.
+• Один пользователь может иметь несколько KYC-кейсов (повторные проверки), но только один активный кейс со статусом pending/manual_review.
+• Одна заявка ip_claims относится к одному issuer, но может иметь несколько supporting documents и одну или несколько записей ручной проверки (ip_reviews).
+• Один актив assets создаётся на базе одобренной заявки ip_claims и имеет максимум один актуальный token_issuance на MVP-этапе.
+• Один listing относится к одному asset; один listing может порождать множество orders и trades.
+7. Архитектура backend
+Реализация: FastAPI 0.115.0 + SQLAlchemy 2.0 (Async) + Alembic. Архитектура модульная, слоистая: API Layer → Service Layer → Integration Layer → Database Layer. Зависимости инжектятся через FastAPI Depends().
+
+7.1. Структура модулей
+
+app/
+├── core/               # Ядро: config, database, security (JWT, auth guards, lazy imports)
+├── api/v1/endpoints/   # HTTP handlers: auth.py, users.py, patents.py, ip_claims.py, ip_intel.py, admin_users.py, admin_patents.py
+├── services/           # Бизнес-логика:
+│                       #   auth_service, user_service, otp_service, otp_sender,
+│                       #   file_storage, patent_service, admin_patent_service, ip_claim_service,
+│                       #   ip_intel_service, audit_service
+├── integrations/       # Внешние API клиенты: patent_clients.py (USPTO, EPO OPS, WIPO, PatentsView)
+├── models/             # SQLAlchemy ORM модели: user, patent, ip_claim, ip_intel, analytics, common
+├── schemas/            # Pydantic DTO: auth, user, ip_claim, ip_intel, admin
+└── repositories/       # (Планируется для будущего использования)
+
+7.2. Слой API (endpoints)
+• Тонкие контроллеры: валидация входных данных через Pydantic, вызов сервисов, возврат response
+• Авторизация через JWT Bearer token + role-based Depends(require_roles(...))
+• Dependency Injection: AsyncSession через get_db, текущий пользователь через get_current_user
+
+7.3. Слой сервисов (business logic)
+• UserService — CRUD пользователей, хэширование паролей (PBKDF2-HMAC-SHA256, 260,000 iterations), профили, admin CRUD (list_users, get_user_admin_detail, admin_update_user, change_user_status, soft_delete_user)
+• AuthService — JWT token management (access/refresh/otp/password_reset), revocation, cleanup
+• OtpService — ДВА режима работы:
+  1. Redis-based (новый API): generate_and_send_otp(), verify_otp()
+     - OTP хранится в Redis как HMAC-SHA256 хэш с TTL 300 секунд
+     - Ключ: otp:{purpose}:{normalized_identifier}
+     - Классификация идентификатора: email (содержит @) или phone (E.164, начинается с +)
+     - Доставка: email через SMTP (smtplib), SMS через stub (NotImplementedError)
+     - Максимум 5 попыток верификации, затем блокировка
+     - При успешной верификации возвращается verified_token (JWT, 10 мин)
+  2. SQLAlchemy-based (legacy API): OTPService.create_otp(), OTPService.verify_otp()
+     - OTP хранится в таблице otp_codes (БД)
+     - Используется старыми endpoints /otp/send и /otp/verify
+• PatentService — precheck патентов (MVP: deterministic adapter), запросы к внешним API
+• AdminPatentService — admin CRUD для патентов (list_patents_admin, get_patent_admin_detail, change_patent_status)
+• IpClaimService — CRUD заявок, загрузка документов, review workflow
+• IpIntelService — оркестрация IP Intelligence: кэш-проверка → внешний API → нормализация → обогащение
+• AuditService — запись аудит-логов для критичных операций
+
+7.4. Слой интеграций (external APIs)
+• BasePatentClient (abstract) — retry (tenacity, exponential backoff 2–30s), rate limiting, audit logging
+• UsptoPatentClient — USPTO Open Data Portal v2.3 (data.uspto.gov)
+  - Endpoints: GET /api/v1/patent/grants, POST /api/v1/patent/applications/search, GET /api/v1/patent/applications/{id}/continuity
+  - Auth: API Key в X-API-Key, 5 calls/sec, cache 72h
+  - Стратегия: grants → fallback applications → continuity для статуса
+  - Нормализация: CPC/USPC/IPC классы, assignees, inventors, status mapping
+• PatentsViewClient — без авторизации, 10 calls/sec, cache 48h
+• EpoOpsClient — OAuth2 Bearer (TODO: client credentials flow), 5 calls/sec, cache 48h
+• WipoPatentscopeClient — API Key (partial implementation), cache 48h
+• OtpSender — email (SMTP) и SMS delivery:
+  - send_email_otp(): SMTP с STARTTLS, env vars: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS
+  - send_sms_otp(): STUB для будущей интеграции (Firebase Auth / MSG91 / Vonage)
+
+7.5. Аутентификация и авторизация
+• Access Token: JWT, 30 мин TTL, payload: sub (email), type, exp, iat, jti
+• Refresh Token: JWT, 7 дней TTL, при logout jti записывается в token_revocations
+• OTP Token: JWT, 10 мин TTL, для верификации
+• Verified Token: JWT, 10 мин TTL, возвращается после успешной верификации OTP (otp-verify endpoint)
+• Password Reset Token: JWT, 30 мин TTL
+• Роли: user / issuer / investor / compliance_officer / admin
+• Guard: @router.get("...", dependencies=[Depends(require_roles("admin"))])
+• OTP Delivery Architecture:
+  - Redis-based: otp:{purpose}:{identifier} → {"otp_hash": hmac_sha256, "attempts_left": 5, "expires_at": timestamp}
+  - HMAC-SHA256 хэширование кодов (env var: OTP_HMAC_SECRET)
+  - Идентификаторы нормализуются: email → lowercase + strip, phone → strip only
+  - Rate limiting: 3 повторных отправки на 10 минут (Redis counter)
+  - SMS provider: STUB (TODO: Firebase Auth / MSG91 / Vonage)
+  - Email provider: SMTP (smtplib, STARTTLS)
+
+7.6. Очереди и фоновые процессы
+• Обработка входящих webhook KYC-провайдера → запись в webhook_events
+• Повторная синхронизация статусов кейсов при временных ошибках внешних API (tenacity retry)
+• Проверка патентов и enrichment данных из USPTO/EPO/WIPO/PatentsView
+• Кэширование: Database cache (PatentCache, PatentSearchCache) + опционально Redis
+• Рассылка уведомлений пользователям о статусе проверки и состоянии сделки
+
+7.7. Архитектурные изменения (рефакторинг v2.2, 05.04.2026)
+• Admin User Management: CRUD endpoints для пользователей (admin only) — list, detail, update, status change, soft-delete
+• Admin Patent Management: CRUD endpoints для патентов (admin/compliance_officer) — list, detail, status change
+• Admin Schemas: новые Pydantic DTO (UserAdminResponse, PatentAdminResponse, pagination models)
+• AdminPatentService: новый сервис для admin patent операций
+• UserService: расширение admin методами (list_users, get_user_admin_detail, admin_update_user, change_user_status, soft_delete_user)
+• Audit Logging: расширен для всех admin операций (role_change, status_change, soft_delete, patent_status_change)
+• Status Transitions: валидация переходов user статус (active ↔ suspended, active → blocked, suspended → blocked)
+• Soft Delete: удаление пользователей только через статус blocked (без физического удаления)
+• RBAC: admin_users (admin only), admin_patents (admin + compliance_officer)
+• Пагинация: все list endpoints поддерживают skip/limit + возвращают total count
+• Search: поиск пользователей по email + full_name (ilike)
+• Joinedload: детальная загрузка relations без N+1 запросов
+• PostgreSQL: добавлен asyncpg в requirements (production driver)
+
+7.8. Изменения v2.3 (USPTO integration, тесты, документация, 05.04.2026)
+• UsptoPatentClient: обновлён на USPTO Open Data Portal v2.3 (data.uspto.gov)
+  - BASE_URL: https://api.uspto.gov/v1 → https://data.uspto.gov
+  - Endpoints: GET /api/v1/patent/grants, POST /api/v1/patent/applications/search, GET continuity
+  - Fallback-стратегия: grants → applications → continuity для статуса
+  - Улучшенная нормализация: CPC/USPC/IPC классы, mixed assignees/inventors, status mapping (Active → granted)
+• PatentCache model: исправлен критический баг с дублирующейся колонкой status
+  - status → patent_status (статус патента) + cache_status (статус кэша)
+  - JSON поля: dict → list для assignees, inventors, cpc_classes, family_ids
+• IpIntelService: исправлены маппинги, конвертация JSON → Pydantic модели
+  - _save_to_cache: теперь передаёт patent_number для корректного поиска в кэше
+  - _cache_to_record: явная конвертация assignees/inventors/geo_data в Pydantic модели
+  - _get_client_for_country: ValueError для неподдерживаемых стран (вместо fallback на USPTO)
+• Alembic migration 002: переименование status → patent_status + cache_status
+• Тесты: 50 тестов (31 patent_clients + 19 ip_intel)
+  - pytest + pytest-asyncio + respx для моков внешних API
+  - Покрытие: retry, fallback, cache hit/miss, round-trip, рекомендации
+• Документация:
+  - docs/TESTS.md — руководство по тестированию
+  - docs/API_FOR_FRONTEND.md — API-справочник для фронтенд-разработчиков
+  - general_docs.txt и architecture.md — обновлены до v2.3
+
+8. Архитектура frontend
+Рекомендуемая реализация: Next.js App Router на JSX, клиентские компоненты только для интерактивных сценариев (wallet connect, формы, status polling), серверные компоненты — для статических и полу-статических представлений. UI должен быть разделён на страницы, переиспользуемые компоненты и domain-specific hooks/services.
+Слой	Содержимое	Примеры
+app/	Маршруты и layout	auth/, kyc/, issuer/, marketplace/, profile/, admin/, /
+components/	Переиспользуемый UI	ConnectWalletButton, AssetCard, KycStatusBadge
+hooks/	Клиентская доменная логика	useKycStatus, useWalletAccount, useAssets
+lib/	SDK и утилиты	solana/client.js, patents/api.js, validators.js
+services/	Сценарии для данных	asset.service.js, tokenization.service.js
+schemas/	Валидация форм и DTO	auth.schema.js, kyc.schema.js, order.schema.js
+
+8.1. Рекомендуемая структура каталогов frontend
+src/
+  app/
+    auth/ login/ || register/
+    kyc/ || issuer/ || marketplace/ || profile/ || admin/
+    api/
+  components/
+    ui/ wallet/ kyc/ issuer/ marketplace/
+  hooks/
+  lib/
+    solana/ patents/ auth/ compliance/
+  services/
+  schemas/
+
+8.2. Ключевые frontend-экраны
+Экран	Назначение	Ключевые элементы
+Landing	Публичная витрина	hero, преимущества, FAQ, CTA регистрации
+Register/Login	Онбординг пользователя	email, password/magic link, accept TOS
+KYC	Прохождение верификации	статус, start verification, retry, explainers
+Issuer Dashboard	Рабочая зона правообладателя	список кейсов, статусы, документы, CTA tokenize
+Submit IP	Подача патента	номер патента, данные владельца, upload supporting docs
+Marketplace	Список активов	фильтры, карточки активов, статусы размещения
+Asset Page	Карточка размещения	описание, метаданные, цена, кнопка Buy
+Profile	Профиль пользователя	Данные аккаунта, балансы, история сделок, tx статусы
+Admin/Review	Панель внутреннего review	очереди кейсов, approve/reject, audit
+
+9. API-контракты уровня MVP
+Base URL: /api/v1
+
+9.1. Auth (/auth) ✅ РЕАЛИЗОВАНО
+POST   /api/v1/auth/register          # Регистрация (OTP flow для patient/issuer)
+POST   /api/v1/auth/otp-send          # Отправка OTP кода (Redis-based, email/SMS)
+POST   /api/v1/auth/otp-verify        # Верификация OTP + verified_token (JWT, 10 мин)
+POST   /api/v1/auth/otp/send          # Legacy: отправка OTP (DB-based, email-only) ⚠️ deprecated
+POST   /api/v1/auth/otp/verify        # Legacy: верификация OTP (DB-based) ⚠️ deprecated
+POST   /api/v1/auth/otp-resend        # Повторная отправка SMS (rate-limited, 3/10 мин)
+POST   /api/v1/auth/login             # Login (email + password)
+POST   /api/v1/auth/refresh           # Refresh access token
+DELETE /api/v1/auth/logout            # Logout (revoke refresh token)
+PUT    /api/v1/auth/password-reset    # Сброс пароля
+GET    /api/v1/auth/me                # Получить текущего пользователя
+
+9.2. Users (/users) — Profile & Verification ✅ РЕАЛИЗОВАНО
+GET    /api/v1/users/profile                    # Получить мой профиль
+PUT    /api/v1/users/profile                    # Обновить мой профиль
+POST   /api/v1/users/verification/documents     # Загрузить документы верификации (ID, selfie)
+GET    /api/v1/users/verification/status        # Проверить статус верификации
+POST   /api/v1/users/verification/review/{id}   # Рецензия верификации (admin/compliance_officer)
+
+✅ РЕАЛИЗОВАНО (Admin User Management — v2):
+GET    /api/v1/users                  # Список пользователей (admin, пагинация, фильтры, поиск)
+GET    /api/v1/users/{user_id}        # Получить пользователя (детально с KYC, wallet, verification)
+PUT    /api/v1/users/{user_id}        # Обновить пользователя (профиль, роль — с audit)
+PUT    /api/v1/users/{user_id}/status # Изменить статус (с валидацией переходов + audit)
+DELETE /api/v1/users/{user_id}        # Удалить пользователя (soft-delete, status=blocked)
+
+9.3. IP Check (/ip) ✅ РЕАЛИЗОВАНО
+POST   /api/v1/ip/check             # Создать IP claim (проверка на дубликат)
+POST   /api/v1/ip/precheck          # Precheck патента (MVP adapter или IP Intel)
+
+9.4. IP Claims (/ip-claims) ✅ РЕАЛИЗОВАНО
+POST   /api/v1/ip-claims                     # Создать IP claim
+GET    /api/v1/ip-claims                     # Список claims (фильтр по статусу)
+GET    /api/v1/ip-claims/{claim_id}          # Получить claim
+POST   /api/v1/ip-claims/{claim_id}/review   # Рецензия на claim
+POST   /api/v1/ip-claims/{claim_id}/documents # Загрузить документ
+
+9.5. IP Intelligence (/patents) ✅ РЕАЛИЗОВАНО
+POST   /api/v1/patents/precheck/international            # Проверка патента (международная)
+POST   /api/v1/patents/search/international              # Международный поиск
+POST   /api/v1/patents/ip-claims/{id}/enrich/international # Обогащение IP claim
+GET    /api/v1/patents/health                              # Health check модуля
+
+9.6. Utils ✅ РЕАЛИЗОВАНО
+GET    /api/v1/ping                     # Ping/pong
+GET    /                                # Status + version
+GET    /health                          # Health check
+
+⛔ НЕ ОТНОСИТСЯ К БЭКЕНДУ (внешние системы):
+# Assets:       /api/v1/assets/*          — внешний блок (marketplace команда)
+# Tokenization: /api/v1/tokenize/*        — внешний блок (Solana интеграция)
+# Marketplace:  /api/v1/marketplace/*     — внешний блок
+# Dividends:    /api/v1/dividends/*       — внешний блок
+
+✅ РЕАЛИЗОВАНО (Admin Patent Management — v2):
+GET    /api/v1/admin/patents                   # Список патентов (admin/compliance_officer, пагинация, фильтры)
+GET    /api/v1/admin/patents/{patent_id}       # Получить патент (детально с owner, documents, reviews)
+PUT    /api/v1/admin/patents/{patent_id}/status # Изменить статус (admin: approved/rejected/archived + audit)
+
+⚠️ ПЛАНИРУЕТСЯ НА БЭКЕНДЕ:
+# Wallet:       /api/v1/wallet/*          (привязка кошелька — бэкенд хранит связь user ↔ wallet)
+# KYC Webhook:  /api/v1/kyc/webhook       (входящий webhook от KYC провайдера)
+
+9.1. Пример бизнес-правил API
+•	Создание IP-кейса доступно зарегистрированному пользователю; токенизация — только при approved KYC и approved IP review.
+•	Создание ордера на покупку доступно только пользователю с approved KYC и положительным compliance screening.
+•	Webhook-эндпоинты должны проходить проверку подписи и сохранять сырое событие в webhook_events.
+•	Все изменения статусов критичных сущностей логируются в audit_logs.
+10. Интеграции и внешние системы
+Интеграция	Назначение	Примечание
+KYC Provider	Идентификация, документ, liveness, decision	Hosted flow/SDK + webhook
+USPTO API	Проверка патента и данных о праве	pre-check + enrichment + manual review
+Solana RPC	On-chain операции	devnet для MVP, mainnet после hardening
+Object Storage	Хранение документов	S3-compatible, private bucket
+Email/Notifications	Уведомления	статусы KYC/IP/trade
+Monitoring/Logging	Наблюдаемость	ошибки, latency, webhook failures
+
+11. Нефункциональные требования и безопасность
+•	PII хранится только в защищённой базе/хранилище; доступ ограничивается по ролям.
+•	Пароли хранятся только в виде secure hash (PBKDF2-HMAC-SHA256, 260,000 iterations).
+•	OTP коды хранятся ТОЛЬКО в Redis в виде HMAC-SHA256 хэшей, никогда не возвращаются в API ответах.
+•	OTP_HMAC_SECRET — критичная переменная окружения, генерируется через secrets.token_hex(32).
+•	Доступ к административным и review-маршрутам защищён RBAC и audit trail.
+•	Внешние webhooks проверяются по подписи и идемпотентности.
+•	Ошибки интеграций не должны приводить к потере данных; обязательна очередь повторов и dead-letter обработка.
+•	On-chain приватные ключи сервиса не хранятся в исходном коде; используются secrets manager / защищённые env.
+•	Все критичные операции (approve, mint, settle, reject) логируются в audit_logs.
+•	SMS provider — STUB, реальная интеграция планируется (Firebase Auth / MSG91 / Vonage).
+•	Email delivery — SMTP с STARTTLS, App Password для Gmail (требуется 2FA).
+12. Рекомендуемый состав MVP
+
+✅ РЕАЛИЗОВАНО (бэкенд):
+11.	Identity: регистрация, login, email verification, роли.
+12.	KYC: модели и статусы готовы ⚠️ webhook от провайдера — планируется.
+13.	IP: подача patent number, pre-check по USPTO, ручной review.
+
+⛔ ВНЕШНИЕ БЛОКИ (не на стороне бэкенда):
+14.	Tokenization: выпуск токена в Solana devnet — внешняя система.
+15.	Marketplace: витрина активов и покупка токена за SOL — внешняя система.
+16.	Dividends: система выплат — внешняя система.
+
+⚠️ ПЛАНИРУЕТСЯ НА БЭКЕНДЕ:
+17.	KYC Webhook: входящий endpoint от KYC провайдера.
+18.	Wallet Link API: привязка кошелька к пользователю.
+19.	Admin CRUD: управление пользователями и патентами.
+13. Открытые вопросы для уточнения до старта разработки
+•	Какова юридическая модель токенизированного актива: доля владения, право на доход, лицензионное требование или иной формат?
+•	Какой KYC-провайдер выбирается для MVP и какие страны/типы документов должны поддерживаться?
+•	Какая модель secondary market допустима на старте: фиксированная цена, офферная модель или order book?
+•	Какой уровень transfer restrictions нужен для токенов на этапе MVP?
+•	Требуется ли поддержка компаний (KYB) в первом релизе или только физических лиц?
+•	Нужна ли интеграция с дополнительными источниками права/ownership кроме USPTO?
+Итоговая рекомендация
+Начинать проект следует как compliance-first платформу: off-chain верификация, KYC и review составляют источник истины, а on-chain слой Solana используется для controlled issuance и расчётов. Для MVP рекомендуется ограничить scope одним типом IP, одним KYC-провайдером, одним сценарием токенизации и упрощённым маркетплейсом.
+

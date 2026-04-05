@@ -1,0 +1,27 @@
+from fastapi import APIRouter
+
+from app.api.v1.endpoints import auth
+from app.api.v1.endpoints import ip_claims
+from app.api.v1.endpoints import ip_intel
+from app.api.v1.endpoints import patents
+from app.api.v1.endpoints import users
+from app.api.v1.endpoints import admin_users
+from app.api.v1.endpoints import admin_patents
+
+router = APIRouter()
+
+
+@router.get("/ping", tags=["Utils"])
+async def ping():
+    return {"message": "pong"}
+
+
+router.include_router(auth.router, prefix="/auth", tags=["Auth"])
+router.include_router(users.router, prefix="/users", tags=["Users"])
+router.include_router(patents.router, prefix="/ip", tags=["IP Check"])
+router.include_router(ip_claims.router, prefix="/ip-claims", tags=["IP Claims"])
+router.include_router(ip_intel.router, prefix="/patents", tags=["IP Intelligence"])
+
+# Admin endpoints
+router.include_router(admin_users.router, prefix="/users", tags=["admin-users"])
+router.include_router(admin_patents.router, prefix="/admin/patents", tags=["admin-patents"])

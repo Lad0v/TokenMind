@@ -1,0 +1,51 @@
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info
+dist
+build
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Documentation
+*.md
+!requirements.txt
+
+# Scripts
+test_*.sh
+test_*.ps1
+
+# Qwen
+.qwen/
+
+# OS
+.DS_Store
+Thumbs.db

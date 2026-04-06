@@ -174,7 +174,7 @@ async def enrich_ip_claim_international(
     и обновляет external_metadata в ip_claims.
     
     **Требуется авторизация.**
-    **Владелец claim или admin/compliance_officer.**
+    **Владелец claim или admin.**
     """
     # Проверка прав доступа
     from sqlalchemy import select
@@ -189,7 +189,7 @@ async def enrich_ip_claim_international(
         raise HTTPException(status_code=404, detail="IP claim not found")
     
     # Проверка прав
-    if current_user.role not in {"admin", "compliance_officer"} and claim.issuer_user_id != current_user.id:
+    if current_user.role not in {"admin"} and claim.issuer_user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Недостаточно прав для обогащения этого IP claim")
     
     service = PatentDataEnrichmentService(db)

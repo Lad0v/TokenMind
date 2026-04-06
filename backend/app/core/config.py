@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List, Optional
 
@@ -58,9 +60,11 @@ class Settings(BaseSettings):
     # Enable audit logging for external API calls
     ENABLE_EXTERNAL_API_AUDIT: bool = True
 
-    # ======================================================================
     # Email OTP — Gmail SMTP (free). Enable 2FA in Google Account and create an App Password.
     # ======================================================================
+
+    # SMS OTP — set to True to enable SMS delivery (requires SMS provider integration)
+    ENABLE_SMS_OTP: bool = False
 
     # SMTP
     SMTP_HOST: str = "smtp.gmail.com"
@@ -81,7 +85,7 @@ class Settings(BaseSettings):
 
     # вместо старого class Config:
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=Path(__file__).resolve().parents[2] / ".env",
         case_sensitive=True,
         extra="ignore"  # игнорировать лишние переменные из .env
     )

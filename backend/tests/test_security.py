@@ -244,15 +244,15 @@ async def test_require_roles_allows_admin(make_user, db_session):
     assert admin.role in {"admin"}
 
 
-async def test_require_roles_allows_compliance_officer(make_user):
-    """require_roles('admin', 'compliance_officer') → allows compliance_officer."""
-    user = User(role="compliance_officer", status="active", email="co@example.com")
-    assert user.role in {"admin", "compliance_officer"}
+async def test_require_roles_allows_admin(make_user):
+    """require_roles('admin') → allows admin."""
+    user = User(role="admin", status="active", email="co@example.com")
+    assert user.role in {"admin"}
 
 
 async def test_require_roles_rejects_user(make_user):
     """require_roles('admin') → rejects regular user."""
-    user = User(role="user", status="active", email="regular@example.com")
+    user = User(role="investor", status="active", email="regular@example.com")
     assert user.role not in {"admin"}
 
 

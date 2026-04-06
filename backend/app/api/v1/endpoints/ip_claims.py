@@ -1,9 +1,12 @@
 """IP Claims management endpoints.
 
 Provides:
-- Create, list, get IP claims
+- List, get IP claims
 - Document upload
-- Review workflow (admin/compliance_officer)
+- Review workflow (admin)
+
+Note: IP claim creation is now handled by POST /api/v1/auth/submit-patent
+which includes the OTP verification flow.
 """
 
 import uuid
@@ -15,7 +18,6 @@ from app.core.database import get_db
 from app.core.security import get_current_user, require_roles
 from app.models.user import User
 from app.schemas.ip_claim import (
-    CreateIpClaimRequest,
     IpClaimListResponse,
     IpClaimResponse,
     IpClaimReviewRequest,
@@ -26,23 +28,6 @@ from app.services.ip_claim_service import IpClaimService
 from app.services.file_storage import save_ip_claim_document
 
 router = APIRouter()
-
-
-@router.post("", response_model=IpClaimResponse)
-async def create_ip_claim(
-    payload: CreateIpClaimRequest,
-    current_user: User = Depends(require_roles("issuer", "admin", "user")),
-    db: AsyncSession = Depends(get_db),
-):
-    claim = await IpClaimService.create(db, current_user.id, payload)
-    await AuditService.write(
-        db,
-        action="ip_claim.created",
-        entity_type="ip_claim",
-        entity_id=str(claim.id),
-        actor_id=current_user.id,
-    )
-    return claim
 
 
 @router.get("", response_model=IpClaimListResponse)
@@ -70,7 +55,7 @@ async def get_ip_claim(
     if not claim:
         raise HTTPException(status_code=404, detail="IP claim не найден")
 
-    if current_user.role not in {"admin", "compliance_officer"} and claim.issuer_user_id != current_user.id:
+    if current_user.role not in {"admin"} and claim.issuer_user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Недостаточно прав")
     return claim
 
@@ -87,7 +72,7 @@ async def upload_ip_claim_document(
     if not claim:
         raise HTTPException(status_code=404, detail="IP claim не найден")
 
-    if claim.issuer_user_id != current_user.id and current_user.role not in {"admin", "compliance_officer"}:
+    if claim.issuer_user_id != current_user.id and current_user.role not in {"admin"}:
         raise HTTPException(status_code=403, detail="Недостаточно прав")
 
     file_url = await save_ip_claim_document(claim_id=claim.id, file=file)
@@ -106,7 +91,7 @@ async def upload_ip_claim_document(
 async def review_ip_claim(
     claim_id: uuid.UUID,
     payload: IpClaimReviewRequest,
-    reviewer: User = Depends(require_roles("admin", "compliance_officer")),
+    reviewer: User = Depends(require_roles("admin")),
     db: AsyncSession = Depends(get_db),
 ):
     claim = await IpClaimService.get_by_id(db, claim_id)

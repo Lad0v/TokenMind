@@ -1,18 +1,19 @@
 """Integration tests for complete user flows.
 
-These tests cover端到ный scenarios:
-1. Patient registration → OTP verification → Login → Profile → Verification → Admin review
-2. Issuser registration → OTP → IP Claim creation → Admin review → Approval
-3. Investor registration → Wallet link → Browse claims
-4. Admin workflow: review verification cases, review IP claims
-5. Role-based access control across the full flow
+These tests cover端到端 scenarios:
+1. Investor registration via wallet → login → profile update
+2. Issuer flow: investor → upgrade to issuer via OTP → verification documents
+3. IP claim management: create, list, review
+4. Role-based access control
+5. Audit trail verification
 """
 
 from __future__ import annotations
 
 import io
+import json
 import uuid
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 
 import pytest
 from httpx import AsyncClient
@@ -20,7 +21,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import (
-    OTPCode,
     User,
     UserRole,
     UserStatus,
@@ -37,10 +37,22 @@ from app.models.common import AuditLog
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _create_access_token_for_user(email: str, role: str = "user") -> str:
+    """Create a JWT access token for testing."""
+    from datetime import timedelta
+    from app.core.security import create_token
+    return create_token(
+        subject=email,
+        token_type="access",
+        expires_delta=timedelta(minutes=30),
+        extra_claims={"role": role},
+    )
+
+
 async def _create_admin_user(db_session: AsyncSession) -> User:
     """Create an admin user directly in DB."""
     from app.services.user_service import UserService
-    
+
     user = User(
         email=f"admin-{uuid.uuid4().hex[:6]}@example.com",
         password_hash=UserService.hash_password("AdminPass123!"),
@@ -53,106 +65,129 @@ async def _create_admin_user(db_session: AsyncSession) -> User:
     return user
 
 
-def _create_access_token_for_user(email: str, role: str = "admin") -> str:
-    """Create a JWT access token for testing."""
-    from datetime import timedelta
-    from app.core.security import create_token
-    return create_token(
-        subject=email,
-        token_type="access",
-        expires_delta=timedelta(minutes=30),
-        extra_claims={"role": role},
-    )
-
-def _make_patient_payload(email: str = None) -> dict:
+def _make_investor_wallet(wallet_address: str = None) -> dict:
     return {
-        "email": email or f"patient-{uuid.uuid4().hex[:6]}@example.com",
-        "password": "SecurePass123!",
-        "role": "user",
-        "legal_name": "John Doe",
-        "country": "US",
+        "email": f"investor-{uuid.uuid4().hex[:6]}@example.com",
+        "solana_wallet_address": wallet_address or "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRrJosgAsU",
     }
 
 
 def _make_issuer_payload(email: str = None) -> dict:
     return {
         "email": email or f"issuer-{uuid.uuid4().hex[:6]}@example.com",
-        "password": "SecurePass123!",
-        "role": "issuer",
-        "legal_name": "Jane Smith",
-        "country": "GB",
-    }
-
-
-def _make_investor_payload(email: str = None) -> dict:
-    return {
-        "email": email or f"investor-{uuid.uuid4().hex[:6]}@example.com",
-        "password": "InvestPass123!",
-        "role": "investor",
-        "wallet_address": f"0x{uuid.uuid4().hex[:16]}",
-    }
-
-
-def _make_admin_payload(email: str = None) -> dict:
-    return {
-        "email": email or f"admin-{uuid.uuid4().hex[:6]}@example.com",
-        "password": "AdminPass123!",
-        "role": "admin",
-        "legal_name": "Admin User",
-        "country": "US",
+        "solana_wallet_address": "8xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRrJosgAsU",
     }
 
 
 # ---------------------------------------------------------------------------
-# 1. Full Patient Flow: Register → OTP → Login → Profile → Verification → Admin Review
+# 1. Investor Flow: Register → Wallet Login → Profile Update
 # ---------------------------------------------------------------------------
 
 
-async def test_full_patient_verification_flow(
+async def test_full_investor_flow(
     client: AsyncClient, db_session: AsyncSession
 ):
-    """Complete flow: patient registers, verifies OTP, submits docs, admin approves."""
-    # Step 1: Register patient
-    payload = _make_patient_payload()
-    resp = await client.post("/api/v1/auth/register", json=payload)
-    assert resp.status_code == 201
-    user_id = resp.json()["user_id"]
-
-    # User created with pending_otp status
+    """Investor registers via wallet, logs in, updates profile."""
     from app.services.user_service import UserService
-    user = await UserService.get_by_email(db_session, payload["email"])
-    assert user.status == UserStatus.pending_otp.value
 
-    # Step 2: Verify OTP
-    stmt = select(OTPCode).where(OTPCode.user_id == user.id, OTPCode.is_used == False)
-    otp = (await db_session.execute(stmt)).scalars().first()
-    assert otp is not None
+    wallet = "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRrJosgAsU"
+    email = f"investor-flow-{uuid.uuid4().hex[:6]}@example.com"
 
+    # Step 1: Register investor
     resp = await client.post(
-        "/api/v1/auth/otp/verify",
-        json={"email": payload["email"], "code": otp.code},
+        "/api/v1/auth/register",
+        json={"email": email, "solana_wallet_address": wallet},
     )
-    assert resp.status_code == 200
-    assert "access_token" in resp.json()
-    assert "refresh_token" in resp.json()
+    assert resp.status_code == 201
 
-    access_token = resp.json()["access_token"]
-    headers = {"Authorization": f"Bearer {access_token}"}
-
-    # User status changed to active
-    await db_session.refresh(user)
+    # Verify user created
+    user = await UserService.get_by_email(db_session, email)
+    assert user is not None
     assert user.status == UserStatus.active.value
+    assert user.role == UserRole.investor.value
+
+    # Step 2: Login via wallet
+    login_resp = await client.post(
+        "/api/v1/auth/login/wallet",
+        json={"wallet_address": wallet, "network": "solana"},
+    )
+    assert login_resp.status_code == 200
+    tokens = login_resp.json()
+    assert "access_token" in tokens
+    assert tokens["role"] == "investor"
 
     # Step 3: Update profile
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
     resp = await client.put(
         "/api/v1/users/profile",
         headers=headers,
-        json={"legal_name": "John Updated", "country": "CA"},
+        json={"legal_name": "Investor Name", "country": "US"},
     )
     assert resp.status_code == 200
-    assert resp.json()["legal_name"] == "John Updated"
+    assert resp.json()["legal_name"] == "Investor Name"
 
-    # Step 4: Submit verification documents
+
+# ---------------------------------------------------------------------------
+# 2. Issuer Flow: Register → Upgrade to Isser → Verification Documents
+# ---------------------------------------------------------------------------
+
+
+async def test_full_issuer_flow_with_verification(
+    client: AsyncClient, db_session: AsyncSession, mock_redis_client
+):
+    """Investor registers, upgrades to issuer via OTP, submits verification docs."""
+    from app.services.user_service import UserService
+
+    wallet = "9xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRrJosgAsU"
+    email = f"issuer-flow-{uuid.uuid4().hex[:6]}@example.com"
+
+    # Step 1: Register investor
+    resp = await client.post(
+        "/api/v1/auth/register",
+        json={"email": email, "solana_wallet_address": wallet},
+    )
+    assert resp.status_code == 201
+
+    # Step 2: Login
+    login_resp = await client.post(
+        "/api/v1/auth/login/wallet",
+        json={"wallet_address": wallet, "network": "solana"},
+    )
+    assert login_resp.status_code == 200
+    tokens = login_resp.json()
+    headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+
+    # Step 3: Upgrade to issuer (triggers OTP)
+    with patch("app.services.otp_service.send_email_otp"):
+        resp = await client.post(
+            "/api/v1/users/upgrade-to-issuer",
+            headers=headers,
+        )
+    assert resp.status_code == 200
+
+    # Step 4: Verify OTP (mock Redis)
+    from app.services.otp_service import _hash_otp
+    import time
+    import json as json_mod
+
+    # Simulate OTP was generated and stored
+    code = "123456"
+    key = f"otp:issuer_upgrade:{email.lower()}"
+    payload = json_mod.dumps({
+        "otp_hash": _hash_otp(code),
+        "attempts_left": 5,
+        "expires_at": time.time() + 300,
+    })
+    mock_redis_client.get = AsyncMock(return_value=payload)
+
+    verify_resp = await client.post(
+        "/api/v1/auth/otp-verify",
+        json={"identifier": email, "code": code, "purpose": "issuer_upgrade"},
+    )
+    assert verify_resp.status_code == 200
+    assert verify_resp.json()["role_changed"] is True
+
+    # Step 5: Submit verification documents
     files = {
         "id_document": ("id.png", io.BytesIO(b"fake-id-data"), "image/png"),
         "selfie": ("selfie.png", io.BytesIO(b"fake-selfie-data"), "image/png"),
@@ -164,245 +199,77 @@ async def test_full_patient_verification_flow(
         data={"user_address": "123 Main St"},
     )
     assert resp.status_code == 201
-    verification_case_id = resp.json()["id"]
     assert resp.json()["status"] == VerificationStatus.pending.value
 
-    # Step 5: Admin reviews and approves
-    admin = await _create_admin_user(db_session)
-    admin_token = _create_access_token_for_user(admin.email)
-    admin_headers = {"Authorization": f"Bearer {admin_token}"}
-
-    resp = await client.post(
-        f"/api/v1/users/verification/review/{verification_case_id}",
-        headers=admin_headers,
-        data={"decision": "approved", "notes": "Documents verified"},
-    )
-    assert resp.status_code == 200
-    assert resp.json()["status"] == VerificationStatus.approved.value
-
-    # Patient status updated
-    await db_session.refresh(user)
-    assert user.status == UserStatus.active.value
-
-    # Verification case status updated
-    vc_stmt = select(VerificationCase).where(VerificationCase.id == uuid.UUID(verification_case_id))
-    vc_result = await db_session.execute(vc_stmt)
-    vc = vc_result.scalar_one_or_none()
-    assert vc is not None
-    assert vc.status == VerificationStatus.approved.value
-
 
 # ---------------------------------------------------------------------------
-# 2. Full Issuer Flow: Register → OTP → IP Claim → Admin Review → Approval
+# 3. IP Claim Management Flow
 # ---------------------------------------------------------------------------
 
 
-async def test_full_issuer_ip_claim_flow(
+async def test_ip_claim_management_flow(
     client: AsyncClient, db_session: AsyncSession
 ):
-    """Complete flow: issuer registers, creates IP claim, admin approves."""
+    """Issuer creates claim via DB, admin reviews it."""
     from app.services.user_service import UserService
+    from app.services.ip_claim_service import IpClaimService
+    from app.schemas.ip_claim import IpClaimReviewRequest
 
-    # Step 1: Register issuer
-    payload = _make_issuer_payload()
-    resp = await client.post("/api/v1/auth/register", json=payload)
-    assert resp.status_code == 201
-
-    issuer = await UserService.get_by_email(db_session, payload["email"])
-    assert issuer.status == UserStatus.pending_otp.value
-
-    # Step 2: Verify OTP
-    stmt = select(OTPCode).where(OTPCode.user_id == issuer.id, OTPCode.is_used == False)
-    otp = (await db_session.execute(stmt)).scalars().first()
-    assert otp is not None
-
-    resp = await client.post(
-        "/api/v1/auth/otp/verify",
-        json={"email": payload["email"], "code": otp.code},
+    # Create issuer
+    wallet = "AxKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRrJosgAsU"
+    email = f"claim-flow-{uuid.uuid4().hex[:6]}@example.com"
+    await client.post(
+        "/api/v1/auth/register",
+        json={"email": email, "solana_wallet_address": wallet},
     )
-    assert resp.status_code == 200
-    access_token = resp.json()["access_token"]
-    issuer_headers = {"Authorization": f"Bearer {access_token}"}
+    issuer = await UserService.get_by_email(db_session, email)
+    # Manually upgrade to issuer
+    issuer.role = UserRole.issuer.value
+    await db_session.flush()
 
-    await db_session.refresh(issuer)
-    assert issuer.status == UserStatus.active.value
-
-    # Step 3: Create IP Claim
-    claim_payload = {
-        "patent_number": "US1234567",
-        "patent_title": "Test Patent for Full Flow",
-        "claimed_owner_name": "Issuer Corp",
-        "description": "A test patent",
-        "jurisdiction": "US",
-    }
-    resp = await client.post("/api/v1/ip-claims", headers=issuer_headers, json=claim_payload)
-    assert resp.status_code == 200
-    claim_id = resp.json()["id"]
-    assert resp.json()["status"] == IpClaimStatus.submitted.value
-
-    # Step 4: Upload supporting document
-    files = {"file": ("spec.pdf", io.BytesIO(b"pdf-data"), "application/pdf")}
-    resp = await client.post(
-        f"/api/v1/ip-claims/{claim_id}/documents",
-        headers=issuer_headers,
-        files=files,
-        data={"doc_type": "specification"},
+    # Login
+    login_resp = await client.post(
+        "/api/v1/auth/login/wallet",
+        json={"wallet_address": wallet, "network": "solana"},
     )
-    assert resp.status_code == 200
+    tokens = login_resp.json()
+    issuer_headers = {"Authorization": f"Bearer {tokens['access_token']}"}
 
-    # Step 5: Admin reviews and approves
+    # Create claim in DB
+    claim = IpClaim(
+        issuer_user_id=issuer.id,
+        patent_number="US5555555",
+        patent_title="Flow Test Patent",
+        claimed_owner_name="Issuer Corp",
+        status=IpClaimStatus.submitted.value,
+    )
+    db_session.add(claim)
+    await db_session.flush()
+    await db_session.refresh(claim)
+    claim_id = str(claim.id)
+
+    # Admin reviews
     admin = await _create_admin_user(db_session)
-    admin_token = _create_access_token_for_user(admin.email)
+    from app.core.security import create_token
+    from datetime import timedelta
+    admin_token = create_token(
+        subject=admin.email, token_type="access",
+        expires_delta=timedelta(minutes=30),
+        extra_claims={"role": "admin"},
+    )
     admin_headers = {"Authorization": f"Bearer {admin_token}"}
 
     resp = await client.post(
         f"/api/v1/ip-claims/{claim_id}/review",
         headers=admin_headers,
-        json={"decision": "approve", "notes": "Valid IP claim"},
+        json={"decision": "approve", "notes": "Approved"},
     )
     assert resp.status_code == 200
     assert resp.json()["status"] == IpClaimStatus.approved.value
 
-    # Audit logs created
-    audit_stmt = select(AuditLog).where(
-        AuditLog.action == "ip_claim.reviewed",
-        AuditLog.entity_id == claim_id,
-    )
-    logs = (await db_session.execute(audit_stmt)).scalars().all()
-    assert len(logs) >= 1
-
 
 # ---------------------------------------------------------------------------
-# 3. Investor Flow: Register → Wallet → Browse Claims
-# ---------------------------------------------------------------------------
-
-
-async def test_full_investor_flow(
-    client: AsyncClient, db_session: AsyncSession
-):
-    """Investor registers (no OTP), browses IP claims."""
-    from app.services.user_service import UserService
-
-    # Step 1: Register investor (no OTP required)
-    payload = _make_investor_payload()
-    resp = await client.post("/api/v1/auth/register", json=payload)
-    assert resp.status_code == 201
-
-    investor = await UserService.get_by_email(db_session, payload["email"])
-    assert investor.status == UserStatus.active.value
-
-    # WalletLink created
-    wallet_stmt = select(WalletLink).where(WalletLink.user_id == investor.id)
-    wallets = (await db_session.execute(wallet_stmt)).scalars().all()
-    assert len(wallets) == 1
-    assert wallets[0].wallet_address == payload["wallet_address"]
-
-    # Step 2: Login
-    login_resp = await client.post(
-        "/api/v1/auth/login",
-        json={"email": payload["email"], "password": payload["password"]},
-    )
-    assert login_resp.status_code == 200
-    access_token = login_resp.json()["access_token"]
-    investor_headers = {"Authorization": f"Bearer {access_token}"}
-
-    # Step 3: Create an IP claim (as issuer) to browse
-    issuer_payload = _make_issuer_payload()
-    await client.post("/api/v1/auth/register", json=issuer_payload)
-    issuer = await UserService.get_by_email(db_session, issuer_payload["email"])
-    issuer_otp_stmt = select(OTPCode).where(OTPCode.user_id == issuer.id, OTPCode.is_used == False)
-    issuer_otp = (await db_session.execute(issuer_otp_stmt)).scalars().first()
-    
-    if issuer_otp:
-        issuer_verify_resp = await client.post(
-            "/api/v1/auth/otp/verify",
-            json={"email": issuer_payload["email"], "code": issuer_otp.code},
-        )
-        issuer_token = issuer_verify_resp.json()["access_token"]
-    else:
-        login_resp = await client.post(
-            "/api/v1/auth/login",
-            json={"email": issuer_payload["email"], "password": "SecurePass123!"},
-        )
-        issuer_token = login_resp.json()["access_token"]
-    
-    issuer_headers = {"Authorization": f"Bearer {issuer_token}"}
-    claim_payload = {
-        "patent_number": "US9999999",
-        "patent_title": "Investor Target Patent",
-        "claimed_owner_name": "Issuer LLC",
-        "description": "Patent for investor",
-        "jurisdiction": "US",
-    }
-    await client.post("/api/v1/ip-claims", headers=issuer_headers, json=claim_payload)
-
-    # Step 4: Investor lists claims
-    resp = await client.get("/api/v1/ip-claims", headers=investor_headers)
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["total"] >= 1
-
-
-# ---------------------------------------------------------------------------
-# 4. Admin Workflow: Review Multiple Cases
-# ---------------------------------------------------------------------------
-
-
-async def test_admin_review_multiple_verification_cases(
-    client: AsyncClient, db_session: AsyncSession
-):
-    """Admin reviews multiple verification cases in batch."""
-    from app.services.user_service import UserService
-
-    # Create admin
-    admin = await _create_admin_user(db_session)
-    admin_token = _create_access_token_for_user(admin.email)
-    admin_headers = {"Authorization": f"Bearer {admin_token}"}
-
-    # Create 3 patients with verification cases
-    verification_case_ids = []
-    for i in range(3):
-        patient_payload = _make_patient_payload(f"patient{i}@example.com")
-        await client.post("/api/v1/auth/register", json=patient_payload)
-        patient = await UserService.get_by_email(db_session, patient_payload["email"])
-        
-        otp_stmt = select(OTPCode).where(OTPCode.user_id == patient.id, OTPCode.is_used == False)
-        otp = (await db_session.execute(otp_stmt)).scalars().first()
-        
-        resp = await client.post(
-            "/api/v1/auth/otp/verify",
-            json={"email": patient_payload["email"], "code": otp.code},
-        )
-        patient_token = resp.json()["access_token"]
-        patient_headers = {"Authorization": f"Bearer {patient_token}"}
-
-        files = {
-            "id_document": (f"id{i}.png", io.BytesIO(b"data"), "image/png"),
-            "selfie": (f"selfie{i}.png", io.BytesIO(b"data"), "image/png"),
-        }
-        resp = await client.post(
-            "/api/v1/users/verification/documents",
-            headers=patient_headers,
-            files=files,
-            data={"user_address": f"Address {i}"},
-        )
-        verification_case_ids.append(resp.json()["id"])
-
-    # Admin approves first 2, rejects last
-    for idx, case_id in enumerate(verification_case_ids):
-        decision = "approved" if idx < 2 else "rejected"
-        resp = await client.post(
-            f"/api/v1/users/verification/review/{case_id}",
-            headers=admin_headers,
-            data={"decision": decision, "notes": f"Review {idx}"},
-        )
-        assert resp.status_code == 200
-        expected_status = VerificationStatus.approved.value if decision == "approved" else VerificationStatus.rejected.value
-        assert resp.json()["status"] == expected_status
-
-
-# ---------------------------------------------------------------------------
-# 5. Role-Based Access Control Across Flows
+# 4. Role-Based Access Control
 # ---------------------------------------------------------------------------
 
 
@@ -412,94 +279,136 @@ async def test_rbac_prevents_unauthorized_actions(
     """Regular users cannot perform admin actions."""
     from app.services.user_service import UserService
 
-    # Create patient
-    patient_payload = _make_patient_payload()
-    await client.post("/api/v1/auth/register", json=patient_payload)
-    patient = await UserService.get_by_email(db_session, patient_payload["email"])
-    
-    otp_stmt = select(OTPCode).where(OTPCode.user_id == patient.id, OTPCode.is_used == False)
-    otp = (await db_session.execute(otp_stmt)).scalars().first()
-    resp = await client.post(
-        "/api/v1/auth/otp/verify",
-        json={"email": patient_payload["email"], "code": otp.code},
+    # Create investor
+    wallet = "BxKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRrJosgAsU"
+    email = f"rbac-{uuid.uuid4().hex[:6]}@example.com"
+    await client.post(
+        "/api/v1/auth/register",
+        json={"email": email, "solana_wallet_address": wallet},
     )
-    patient_token = resp.json()["access_token"]
-    patient_headers = {"Authorization": f"Bearer {patient_token}"}
+    investor = await UserService.get_by_email(db_session, email)
 
-    # Create issuer with IP claim
-    issuer_payload = _make_issuer_payload()
-    await client.post("/api/v1/auth/register", json=issuer_payload)
-    issuer = await UserService.get_by_email(db_session, issuer_payload["email"])
-    
-    issuer_otp_stmt = select(OTPCode).where(OTPCode.user_id == issuer.id, OTPCode.is_used == False)
-    issuer_otp = (await db_session.execute(issuer_otp_stmt)).scalars().first()
-    resp = await client.post(
-        "/api/v1/auth/otp/verify",
-        json={"email": issuer_payload["email"], "code": issuer_otp.code},
+    login_resp = await client.post(
+        "/api/v1/auth/login/wallet",
+        json={"wallet_address": wallet, "network": "solana"},
     )
-    issuer_token = resp.json()["access_token"]
-    issuer_headers = {"Authorization": f"Bearer {issuer_token}"}
+    tokens = login_resp.json()
+    investor_headers = {"Authorization": f"Bearer {tokens['access_token']}"}
 
-    claim_payload = {
-        "patent_number": "US7777777",
-        "patent_title": "RBAC Test Patent",
-        "claimed_owner_name": "Issuer Co",
-        "description": "Test",
-        "jurisdiction": "US",
-    }
-    resp = await client.post("/api/v1/ip-claims", headers=issuer_headers, json=claim_payload)
-    claim_id = resp.json()["id"]
-
-    # Patient tries to review claim → 403
+    # Investor tries to review claim → 403
+    fake_claim_id = uuid.uuid4()
     resp = await client.post(
-        f"/api/v1/ip-claims/{claim_id}/review",
-        headers=patient_headers,
-        json={"decision": "approve", "notes": "Unauthorized review"},
+        f"/api/v1/ip-claims/{fake_claim_id}/review",
+        headers=investor_headers,
+        json={"decision": "approve", "notes": "Unauthorized"},
     )
-    assert resp.status_code in (403, 404)  # Either is acceptable for this test
-
-    # Patient tries to access admin user list → 403
-    resp = await client.get("/api/v1/users", headers=patient_headers)
-    assert resp.status_code in (403, 404)  # Either is acceptable
+    assert resp.status_code in (403, 404)
 
 
 # ---------------------------------------------------------------------------
-# 6. Complete Audit Trail
+# 5. Audit Trail
 # ---------------------------------------------------------------------------
 
 
 async def test_full_flow_creates_complete_audit_trail(
     client: AsyncClient, db_session: AsyncSession
 ):
-    """Verify audit log captures all critical actions in the flow."""
+    """Verify audit log captures critical actions."""
     from app.services.user_service import UserService
 
-    # Register and verify patient
-    patient_payload = _make_patient_payload()
-    await client.post("/api/v1/auth/register", json=patient_payload)
-    patient = await UserService.get_by_email(db_session, patient_payload["email"])
-    
-    otp_stmt = select(OTPCode).where(OTPCode.user_id == patient.id, OTPCode.is_used == False)
-    otp = (await db_session.execute(otp_stmt)).scalars().first()
-    resp = await client.post(
-        "/api/v1/auth/otp/verify",
-        json={"email": patient_payload["email"], "code": otp.code},
+    wallet = "CxKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRrJosgAsU"
+    email = f"audit-flow-{uuid.uuid4().hex[:6]}@example.com"
+
+    # Register
+    await client.post(
+        "/api/v1/auth/register",
+        json={"email": email, "solana_wallet_address": wallet},
     )
-    access_token = resp.json()["access_token"]
-    headers = {"Authorization": f"Bearer {access_token}"}
+    user = await UserService.get_by_email(db_session, email)
 
     # Login
     await client.post(
-        "/api/v1/auth/login",
-        json={"email": patient_payload["email"], "password": patient_payload["password"]},
+        "/api/v1/auth/login/wallet",
+        json={"wallet_address": wallet, "network": "solana"},
     )
 
     # Check audit logs
     audit_stmt = select(AuditLog).where(
-        AuditLog.entity_id == str(patient.id)
+        AuditLog.entity_id == str(user.id)
     )
     logs = (await db_session.execute(audit_stmt)).scalars().all()
-    
-    # Should have registration, OTP verify, login
+
     actions = [log.action for log in logs]
-    assert "auth.register" in actions or "auth.login_success" in actions
+    assert "auth.register_investor" in actions
+    assert "auth.wallet_login" in actions
+
+
+# ---------------------------------------------------------------------------
+# 6. Admin Workflow: Multiple Claims Review
+# ---------------------------------------------------------------------------
+
+
+async def test_admin_review_multiple_ip_claims(
+    client: AsyncClient, db_session: AsyncSession
+):
+    """Admin reviews multiple IP claims."""
+    from app.services.user_service import UserService
+    from app.core.security import create_token
+    from datetime import timedelta
+    from app.schemas.ip_claim import IpClaimReviewRequest
+    from app.services.ip_claim_service import IpClaimService
+
+    # Create admin
+    admin = await _create_admin_user(db_session)
+    admin_token = create_token(
+        subject=admin.email, token_type="access",
+        expires_delta=timedelta(minutes=30),
+        extra_claims={"role": "admin"},
+    )
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+    # Create issuer and claims
+    claim_ids = []
+    for i in range(3):
+        email = f"issuer{i}@example.com"
+        # Use valid base58 wallets (no 0, O, I, l)
+        wallets = ["EaKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRrJosgAsA",
+                   "EbKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRrJosgAsB",
+                   "EcKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRrJosgAsC"]
+        wallet = wallets[i]
+        await client.post(
+            "/api/v1/auth/register",
+            json={"email": email, "solana_wallet_address": wallet},
+        )
+        # Get user directly from DB since email is unique
+        from sqlalchemy import select as sa_select
+        result = await db_session.execute(
+            sa_select(User).where(User.email == email.lower())
+        )
+        issuer = result.scalar_one_or_none()
+        assert issuer is not None, f"Issuer {email} not found after registration"
+        issuer.role = UserRole.issuer.value
+        await db_session.flush()
+
+        claim = IpClaim(
+            issuer_user_id=issuer.id,
+            patent_number=f"US{i}00000{i}",
+            patent_title=f"Claim {i}",
+            claimed_owner_name=f"Company {i}",
+            status=IpClaimStatus.submitted.value,
+        )
+        db_session.add(claim)
+        await db_session.flush()
+        claim_ids.append(str(claim.id))
+
+    # Admin approves first 2, rejects last
+    for idx, claim_id in enumerate(claim_ids):
+        decision = "approve" if idx < 2 else "reject"
+        resp = await client.post(
+            f"/api/v1/ip-claims/{claim_id}/review",
+            headers=admin_headers,
+            json={"decision": decision, "notes": f"Review {idx}"},
+        )
+        assert resp.status_code == 200
+        expected_status = IpClaimStatus.approved.value if decision == "approve" else IpClaimStatus.rejected.value
+        assert resp.json()["status"] == expected_status

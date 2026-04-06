@@ -1,9 +1,9 @@
-"""Tests for app/services/otp_sender.py (MSG91 SMS integration).
+"""Tests for app/services/otp_sender.py (SMS/Email OTP delivery).
 
-NOTE: SMS OTP is currently a STUB (NotImplementedError).
-These tests are placeholders for future MSG91 integration.
+SMS OTP is currently a STUB (NotImplementedError).
+Email OTP uses SMTP via environment variables.
 
-Uses respx to mock httpx calls to MSG91 API.
+Uses respx to mock httpx calls for future SMS provider integration.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import httpx
 import pytest
 import respx
 
-from app.services.otp_sender import send_sms_otp, resend_sms_otp
+from app.services.otp_sender import send_sms_otp
 
 # ---------------------------------------------------------------------------
 # Fixtures / constants
@@ -37,19 +37,7 @@ async def test_send_sms_otp_is_stub():
 
 
 # ---------------------------------------------------------------------------
-# resend_sms_otp — currently STUB
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_resend_sms_otp_is_stub():
-    """SMS OTP resend is not yet implemented — NotImplementedError expected."""
-    with pytest.raises(NotImplementedError):
-        await resend_sms_otp(VALID_PHONE, via="text")
-
-
-# ---------------------------------------------------------------------------
-# TODO: Enable these tests after MSG91 integration
+# TODO: Enable these tests after SMS provider integration
 # ---------------------------------------------------------------------------
 #
 # @pytest.mark.asyncio

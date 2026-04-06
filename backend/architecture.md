@@ -4,7 +4,7 @@
 
 **Тип проекта:** Монолитный FastAPI backend для платформы управления интеллектуальной собственностью (IP) и KYC верификации.
 
-**Версия:** v2.3 (USPTO v2.3 integration, тесты, документация, 05.04.2026)
+**Версия:** v2.8 (Simplified Roles, 05.04.2026)
 
 **Технологический стек:**
 - **Backend:** Python 3.12, FastAPI 0.115.0
@@ -15,7 +15,8 @@
 - **Внешние API:** USPTO, EPO OPS, WIPO PATENTSCOPE, PatentsView
 - **HTTP клиенты:** httpx, aiohttp
 - **Retry логика:** tenacity
-- **Тестирование:** pytest, pytest-asyncio
+- **Хранилище:** MinIO/S3 (aiobotocore), local fallback
+- **Тестирование:** pytest, pytest-asyncio, pytest-cov, respx
 
 **Структура:** Модульный монолит с чистым разделением слоев (layers).
 
@@ -56,17 +57,28 @@
 ## Структура директорий
 
 ```
-D:\FastAPI2\
+D:\IpClaim\
 ├── main.py                          # Точка входа (базовый FastAPI app)
 ├── requirements.txt                 # Python зависимости
 ├── docker-compose.yml               # Docker orchestration
+├── docker-compose.override.yml      # Docker override (MinIO, volumes)
 ├── Dockerfile                       # Container image
 ├── alembic.ini                      # Alembic конфигурация
+├── Makefile                         # Автоматизация команд (make test, make lint, etc.)
+├── pytest.ini                       # Pytest конфигурация
 ├── .env.example                     # Переменные окружения (шаблон)
+├── .env                             # Переменные окружения (локальные, не в git)
+├── to_change.md                     # План изменений для будущих версий
+├── IP_INTEL_MODULE.md               # Документация IP Intel модуля
+├── general_docs.txt                 # Общее ТЗ и документация проекта
+│
+├── docs/                            # Дополнительная документация
+│   ├── API_FOR_FRONTEND.md          # API-справочник для фронтенд-разработчиков
+│   └── TESTS.md                     # Руководство по тестированию
 │
 └── app/
     ├── __init__.py
-    ├── main.py                      # FastAPI приложение (дублирует root main.py)
+    ├── main.py                      # FastAPI приложение (stub — дублирует root main.py, планируется удаление)
     │
     ├── core/                        # Ядро приложения
     │   ├── config.py                # Pydantic settings (.env)
@@ -85,7 +97,7 @@ D:\FastAPI2\
     │       └── admin_patents.py     # /api/v1/admin/patents/* (admin patent CRUD)
     │
     ├── models/                      # SQLAlchemy ORM модели
-    │   ├── user.py                  # User, Profile, KYCCase, WalletLink, OTPCode, VerificationCase
+    │   ├── user.py                  # User, Profile, KYCCase, SanctionCheck, WalletLink, OTPCode, VerificationCase
     │   ├── patent.py                # Patent, PatentDocument, PatentReview
     │   ├── ip_claim.py              # IpClaim, IpDocument, IpReview, TokenRevocation
     │   ├── ip_intel.py              # PatentCache, PatentSearchCache (кэш модуль)
@@ -94,10 +106,10 @@ D:\FastAPI2\
     │
     ├── services/                    # Бизнес-логика
     │   ├── auth_service.py          # Token revocation, cleanup
-    │   ├── user_service.py          # User CRUD, password hashing, profiles, admin operations
-    │   ├── otp_service.py           # OTP generation/verification (Redis + legacy DB)
+    │   ├── user_service.py          # User CRUD, password hashing, profiles, admin operations, Wallet Link CRUD
+    │   ├── otp_service.py           # OTP generation/verification (Redis-based)
     │   ├── otp_sender.py            # Email (SMTP) и SMS (STUB) delivery
-    │   ├── file_storage.py          # File upload helpers (verification docs, IP claim docs)
+    │   ├── file_storage.py          # MinIO/S3 upload + local fallback
     │   ├── patent_service.py        # Patent precheck (delegates to IP Intel or MVP adapter)
     │   ├── admin_patent_service.py  # Admin patent CRUD (list, detail, status change)
     │   ├── ip_claim_service.py      # IP claims CRUD, document registration, reviews
@@ -114,7 +126,7 @@ D:\FastAPI2\
     ├── integrations/                # Внешние API клиенты
     │   └── patent_clients.py        # USPTO, PatentsView, EPO OPS, WIPO клиенты
     │
-    └── repositories/                # (Планируется для будущего использования)
+    └── repositories/                # ❌ УДАЛЕНО в v2.6 — паттерн Repository не используется (прямой доступ через SQLAlchemy в сервисах)
 ```
 
 ---
@@ -139,11 +151,12 @@ AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_co
 
 **User** - Основная модель пользователя
 - `id: UUID` (PK)
-- `email: str` (unique, indexed)
-- `password_hash: str` (nullable - инвесторы без пароля)
-- `role: UserRole` (user, issuer, investor, compliance_officer, admin)
+- `email: str` (unique, indexed, nullable — для wallet-only пользователей)
+- `password_hash: str` (nullable — инвесторы без пароля)
+- `auth_provider_ref: str` (nullable - ссылка на внешний auth-провайдер, v2.6+)
+- `role: UserRole` (investor, issuer, admin)
 - `status: UserStatus` (pending_otp, active, suspended, blocked, rejected)
-- Relationships: profile, kyc_cases, patents, ip_claims, wallet_links, otp_codes
+- Relationships: profile, kyc_cases, sanctions_checks, patents, ip_claims, wallet_links, otp_codes, verification_cases
 
 **Profile** - Профиль пользователя
 - `user_id: UUID` (PK, FK -> users.id)
@@ -156,6 +169,13 @@ AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_co
 - `provider_case_id: str`
 - `status: KYCCaseStatus`
 - `risk_level: KYCRiskLevel`
+
+**SanctionCheck** - Проверка санкций (v2.6+)
+- `id: UUID` (PK)
+- `user_id: UUID` (FK)
+- `status: SanctionCheckStatus` (pending, clear, matches_found, manual_review, failed)
+- `flags: JSON` (найденные совпадения)
+- `checked_at`
 
 **WalletLink** - Привязка криптокошелька
 - `id: UUID` (PK)
@@ -268,12 +288,10 @@ AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_co
 
 #### Auth (`/auth`)
 ```
-POST   /api/v1/auth/register          # Регистрация (OTP flow для patient/issuer)
+POST   /api/v1/auth/register          # Регистрация (OTP flow для issuer)
+POST   /api/v1/auth/register/wallet   # Регистрация только через кошелёк (investor, без OTP)
 POST   /api/v1/auth/otp-send          # Отправка OTP (Redis-based, email/SMS)
 POST   /api/v1/auth/otp-verify        # Верификация OTP + verified_token (JWT, 10 мин)
-POST   /api/v1/auth/otp/send          # Legacy: отправка OTP (DB-based)
-POST   /api/v1/auth/otp/verify        # Legacy: верификация OTP (DB-based)
-POST   /api/v1/auth/otp-resend        # Повторная отправка (rate-limited)
 POST   /api/v1/auth/login             # Login (email + password)
 POST   /api/v1/auth/refresh           # Refresh access token
 DELETE /api/v1/auth/logout            # Logout (revoke refresh token)
@@ -287,9 +305,27 @@ GET    /api/v1/auth/me                # Получить текущего пол
 ```
 GET    /api/v1/users/profile                    # Получить мой профиль
 PUT    /api/v1/users/profile                    # Обновить мой профиль
-POST   /api/v1/users/verification/documents     # Загрузить документы верификации (ID, selfie)
+POST   /api/v1/users/verification/precheck      # Получить данные патента для верификации (NEW v2.5)
+POST   /api/v1/users/verification/documents     # Загрузить документы верификации (ID, selfie, video)
 GET    /api/v1/users/verification/status        # Проверить статус верификации
-POST   /api/v1/users/verification/review/{id}   # Рецензия верификации (admin/compliance_officer)
+POST   /api/v1/users/verification/review/{id}   # Рецензия верификации (admin)
+```
+
+**Wallet Link** (реализовано v2.5):
+```
+POST   /api/v1/users/wallets                    # Добавить кошелек
+GET    /api/v1/users/wallets                    # Список кошельков пользователя
+GET    /api/v1/users/wallets/primary            # Основной кошелек (Solana)
+DELETE /api/v1/users/wallets/{wallet_id}        # Удалить кошелек (нельзя удалить primary — 403)
+```
+
+> **Wallet Immutability:** Primary wallet (основной кошелёк) нельзя удалить (возвращается 403) или изменить.
+> Это гарантирует неизменность идентифика пользователя, привязанного к кошельку.
+
+**Account & Upgrade** (v2.7):
+```
+POST   /api/v1/users/upgrade-to-issuer          # Upgrade investor → issuer (OTP required)
+DELETE /api/v1/users/account                    # Удалить свой аккаунт (soft-delete)
 ```
 
 **Admin CRUD** (✅ Реализовано v2):
@@ -303,7 +339,7 @@ DELETE /api/v1/users/{user_id}        # Удалить пользователя 
 
 #### Admin Patents (`/admin/patents`) (✅ Реализовано v2):
 ```
-GET    /api/v1/admin/patents                   # Список патентов (admin/compliance_officer)
+GET    /api/v1/admin/patents                   # Список патентов (admin)
 GET    /api/v1/admin/patents/{patent_id}       # Получить патент (детально)
 PUT    /api/v1/admin/patents/{patent_id}/status # Изменить статус (с audit)
 ```
@@ -347,7 +383,7 @@ GET    /health                         # Health check
 1. **Access Token** (30 мин по умолчанию)
    - Тип: `access`
    - Используется для авторизации запросов через `Authorization: Bearer <token>`
-   - Payload: `sub` (email), `type`, `exp`, `iat`, `jti`
+   - Payload: `sub` (user.id UUID или email для wallet-only), `type`, `exp`, `iat`, `jti`
 
 2. **Refresh Token** (7 дней по умолчанию)
    - Тип: `refresh`
@@ -372,11 +408,11 @@ iterations = 260,000
 ### Role-Based Access Control
 
 **Роли:**
-- `user` - обычный пользователь (patent submitter)
-- `issuer` - эмитент (создает IP claims)
-- `investor` - инвестор (только wallet, без OTP)
-- `compliance_officer` - офицер комплаенса (review claims)
-- `admin` - администратор
+- `investor` — инвестор (по умолчанию, может upgrade до issuer через /users/upgrade-to-issuer)
+- `issuer` — эмитент (создаёт IP claims, подаёт патенты)
+- `admin` — администратор (все админ-действия, включая review claim'ов и патентов)
+
+> **Примечание (v2.8):** Роль `compliance_officer` была объединена с `admin`. Все действия, ранее доступные compliance_officer, теперь выполняются ролью `admin`.
 
 **Guard:**
 ```python
@@ -394,9 +430,9 @@ iterations = 260,000
 
 ### User Registration Flow
 
-#### Для Patient/Issuer:
+#### Для Issuer (email/password + OTP):
 ```
-1. POST /auth/register (email, password, role, legal_name, country)
+1. POST /auth/register (email, password, role=issuer, legal_name, country)
    → Создается User со статусом pending_otp
    → Создается Profile
    → Генерируется OTP код
@@ -408,16 +444,38 @@ iterations = 260,000
 3. POST /auth/otp/verify (email, code)
    → Проверяется OTP код
    → User статус меняется на active
-   → Создается VerificationCase
+   → Создаётся VerificationCase
    → Возвращаются access_token + refresh_token
 ```
 
-#### Для Investor:
+#### Для Investor (wallet-only, без OTP):
 ```
-1. POST /auth/register (email, password, role=investor, wallet_address)
-   → Создается User со статусом active (без OTP)
-   → Создается WalletLink
-   → Возвращается user_id
+1. POST /auth/register/wallet (wallet_address, network, legal_name)
+   → Создаётся User со статусом active (без OTP, email nullable)
+   → Роль: investor
+   → Создаётся WalletLink (primary)
+   → Возвращаются access_token + refresh_token
+```
+
+#### Для Investor (email/password, без OTP):
+```
+1. POST /auth/register (email, password, role=investor, legal_name, country)
+   → Создаётся User со статусом active (без OTP)
+   → Роль: investor
+   → Возвращаются access_token + refresh_token
+```
+
+#### Investor to Issuer Upgrade:
+```
+1. POST /users/upgrade-to-issuer (требует авторизацию, role=investor)
+   → Генерируется OTP код на email пользователя
+   → User получает verified_token (JWT, 10 мин)
+
+2. POST /auth/otp/verify (email, code, verified_token)
+   → Проверяется OTP код
+   → Роль меняется с investor на issuer
+   → Создаётся VerificationCase
+   → Возвращаются обновлённые access_token + refresh_token
 ```
 
 ### IP Claim Flow
@@ -435,7 +493,7 @@ iterations = 260,000
    → IpClaimService.upload_document()
    → Файлы сохраняются в uploads/ip_claims/{claim_id}/
 
-4. Compliance officer делает review: POST /ip-claims/{id}/review
+4. Admin делает review: POST /ip-claims/{id}/review
    → IpClaimService.review()
    → Статус меняется на approved/rejected/submitted
 ```
@@ -524,6 +582,7 @@ NormalizedPatentRecord(
 # Basic
 PROJECT_NAME=FastAPI Boilerplate
 VERSION=0.1.0
+DESCRIPTION=Монолитный FastAPI проект
 DEBUG=False
 
 # Database
@@ -534,6 +593,10 @@ SECRET_KEY=your-super-secret-key-change-in-production
 JWT_ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=30
 REFRESH_TOKEN_EXPIRE_MINUTES=10080  # 7 дней
+EMAIL_VERIFY_TOKEN_EXPIRE_MINUTES=1440  # 24 часа
+PASSWORD_RESET_TOKEN_EXPIRE_MINUTES=30
+OTP_TOKEN_EXPIRE_MINUTES=10
+REQUIRE_EMAIL_VERIFICATION=False
 
 # CORS
 ENABLE_CORS=True
@@ -547,8 +610,9 @@ EPO_OPS_CONSUMER_SECRET=
 WIPO_API_KEY=
 
 # Redis (optional)
-ENABLE_REDIS=False
+ENABLE_REDIS=True
 REDIS_URL=
+REDIS_PASSWORD=
 
 # Cache & Rate Limiting
 PATENT_CACHE_TTL_HOURS=48
@@ -560,10 +624,21 @@ ENABLE_EXTERNAL_API_AUDIT=True
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USER=your@gmail.com
-SMTP_PASS=xxxx_xxxx_xxxx_xxxx
+SMTP_PASSWORD=xxxx_xxxx_xxxx_xxxx
+SMTP_FROM_EMAIL=noreply@localhost
+
+# SMS OTP — set to True to enable SMS delivery (requires provider integration)
+ENABLE_SMS_OTP=False
 
 # Generate with: python -c "import secrets; print(secrets.token_hex(32))"
 OTP_HMAC_SECRET=replace-with-32-random-bytes
+
+# MinIO / S3 Storage
+MINIO_ENDPOINT=minio:9000
+MINIO_ACCESS_KEY=minioadmin
+MINIO_SECRET_KEY=minioadmin
+MINIO_BUCKET=ip-documents
+MINIO_USE_SSL=False
 ```
 
 ---
@@ -591,7 +666,8 @@ async def get_current_user(
     db: AsyncSession = Depends(get_db),
 ) -> User:
     payload = decode_token(token, expected_type="access")
-    user = await UserService.get_by_email(db, payload["sub"])
+    # sub может быть user.id (UUID) или email (для wallet-only пользователей)
+    user = await UserService.get_by_id_or_email(db, payload["sub"])
     # ... validation
     return user
 
@@ -760,8 +836,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 ### 6. File Storage Abstraction
 - `file_storage.py` — централизованный сервис для сохранения документов
-- Поддерживает verification documents и IP claim documents
-- Планируется миграция на S3/MinIO (через `minio` пакет)
+- **MinIO/S3 Integration** (v2.5): aiobotocore для async uploads
+- **Automatic Fallback**: MinIO → local filesystem при ошибках
+- **Testing Support**: base_dir параметр для локального тестирования
+- Поддерживает verification documents (ID, selfie, video) и IP claim documents
 
 ### 7. OTP Architecture Split
 - **New endpoints** (`/otp-send`, `/otp-verify`): Redis-based, HMAC-hashed codes, 5-min TTL
@@ -807,23 +885,25 @@ def create_patent_client(source: str) -> BasePatentClient:
 6. ~~**Schema Consolidation**~~ — Удалены дубликаты PatentPrecheckRequest/Response
 7. ~~**IP Intel Module**~~ — Реализованы PatentStatusCheckService, PatentDataEnrichmentService, InternationalSearchService
 8. ~~**Patent Clients**~~ — UsptoPatentClient, PatentsViewClient реализованы; EpoOpsClient (OAuth2 TODO), WipoPatentscopeClient (partial)
+9. ~~**S3/MinIO Integration**~~ — Полная интеграция v2.5 (aiobotocore, docker-compose, automatic fallback)
+10. ~~**Wallet Link API**~~ — Полный CRUD v2.5 (add, list, get primary, delete)
+11. ~~**Verification Precheck**~~ — Endpoint для получения данных патента перед верификацией v2.5
+12. ~~**Login Response Refactor**~~ — Login возвращает только роль (to_change.md #7) v2.5
+13. ~~**Test Suite**~~ — 171 тест, 100% passing, 0 warnings v2.5
 
 ### Remaining TODOs (из кода)
-9. **EPO OAuth2:** Реализовать client credentials flow (`patent_clients.py:710`)
-10. **WIPO Client:** Завершить реализацию WIPO клиента
-11. **EPO OPS XML Parsing:** Детальный парсинг ответов (`patent_clients.py:771-839`)
-12. **USPTO Response Formats:** Обработать различные форматы ответов (`patent_clients.py:338`)
-13. **Audit Logging:** Подключить AuditService к external API вызовам (`patent_clients.py:148`)
-14. **Upsert для PostgreSQL:** Оптимизировать PatentCache (`ip_intel_service.py:250`)
-15. **Health Check Improvements:** Реализовать проверку API key/OAuth2 статуса (`ip_intel.py:244-247`)
+14. **EPO OAuth2:** Реализовать client credentials flow (`patent_clients.py:710`)
+15. **WIPO Client:** Завершить реализацию WIPO клиента
+16. **EPO OPS XML Parsing:** Детальный парсинг ответов (`patent_clients.py:771-839`)
+17. **USPTO Response Formats:** Обработать различные форматы ответов (`patent_clients.py:338`)
+18. **Audit Logging:** Подключить AuditService к external API вызовам (`patent_clients.py:148`)
+19. **Upsert для PostgreSQL:** Оптимизировать PatentCache (`ip_intel_service.py:250`)
+20. **Health Check Improvements:** Реализовать проверку API key/OAuth2 статуса (`ip_intel.py:244-247`)
 
 ### Planned (планируется на бэкенде)
-16. **S3/MinIO Integration:** File storage использует локальную папку; MinIO config есть, но не интегрирован
-17. **KYC Webhook Processing:** Входящий endpoint для webhook от KYC провайдера
-18. **Wallet Link API:** Привязка кошелька к пользователю (`wallet_links` модель уже есть)
-19. **Admin CRUD для Users/Patents:** Управление пользователями и патентами
-20. **SMS OTP Provider:** Интеграция с Firebase Auth / MSG91 / Vonage (сейчас STUB)
-21. **Monitoring:** Prometheus metrics, structured logging
+21. **KYC Webhook Processing:** Входящий endpoint для webhook от KYC провайдера
+22. **SMS OTP Provider:** Интеграция с Firebase Auth / MSG91 / Vonage (сейчас STUB)
+23. **Monitoring:** Prometheus metrics, structured logging
 
 ---
 
@@ -892,9 +972,9 @@ from app.services.user_service import UserService
 
 ### Overview
 
-OTP система поддерживает два параллельных режима:
-1. **Redis-based** (новый API) — `generate_and_send_otp()`, `verify_otp()`
-2. **SQLAlchemy-based** (legacy) — `OTPService.create_otp()`, `OTPService.verify_otp()`
+OTP система использует **единый Redis-based режим**:
+- `generate_and_send_otp()`, `verify_otp()`
+- Legacy SQLAlchemy-based OTP удалён (v2.4)
 
 ### Redis-based OTP Flow
 
@@ -911,7 +991,8 @@ OTP система поддерживает два параллельных ре
 │                                                                  │
 │  2. Dispatch Delivery                                            │
 │     ├── email → send_email_otp() → SMTP (smtplib, STARTTLS)      │
-│     └── phone → send_sms_otp() → STUB (NotImplementedError)      │
+│     └── phone → ENABLE_SMS_OTP=True → send_sms_otp()             │
+│                ENABLE_SMS_OTP=False → warning log (dev mode)      │
 │                                                                  │
 │  3. POST /api/v1/auth/otp-verify                                 │
 │     ├── redis.get(key) → payload                                 │
@@ -993,6 +1074,47 @@ Value (JSON):
 
 ## Changelog
 
+### v2.8 — 05.04.2026 (Simplified Roles)
+- **Удалена роль `compliance_officer`:** остались только `investor`, `issuer`, `admin`
+- **Role Merge:** Все действия `compliance_officer` (ревью claim'ов, патентов, верификаций) теперь выполняет роль `admin`
+- **RBAC обновлён:** admin_users (admin only), admin_patents (admin only), verification review (admin only), claim review (admin only)
+
+### v2.7 — 05.04.2026 (Wallet-Only Auth, Role Upgrade)
+- **Удалена роль `user`:** остались только `investor`, `issuer`, `admin`
+- **Wallet-Only Registration:** POST /auth/register/wallet — регистрация инвестора через кошелёк (без OTP, email nullable)
+- **Investor to Issuer Upgrade:** POST /users/upgrade-to-issuer — upgrade роли через OTP верификацию
+- **Delete Account:** DELETE /users/account — пользователь может удалить свой аккаунт (soft-delete)
+- **JWT `sub` field:** теперь поддерживает user.id (UUID) и email форматы
+- **Wallet Immutability:** primary wallet нельзя удалить (403) или изменить
+- **Роли:**
+  - `investor` — по умолчанию, wallet-only или email/password (без OTP), может upgrade до issuer
+  - `issuer` — подача патентов и создание IP claims (требует email/password + OTP)
+  - `admin` — полный доступ
+
+### v2.5 — 05.04.2026 (MVP Ready, Wallet Link API, MinIO, to_change.md)
+- **Login endpoint:** возвращает только роль (без токенов) — to_change.md #7
+  - Refresh endpoint сохранён для обратной совместимости (LoginWithTokenResponse)
+  - Тесты обновлены для создания токенов напрямую
+- **Verification Precheck:** POST /users/verification/precheck (v2.5)
+  - Получение данных патента из БД перед верификацией
+  - Per to_change.md #19: patent DB → name/address → ID+video+address → manual review
+- **Wallet Link API:** полный CRUD (v2.5)
+  - POST/GET/DELETE /users/wallets, GET /users/wallets/primary
+  - Интеграция при регистрации инвестора (wallet_address в RegisterRequest)
+  - UserService: create_wallet_link, get_user_wallets, get_primary_wallet, delete_wallet
+- **MinIO/S3 Integration:** полная интеграция (v2.5)
+  - aiobotocore в requirements.txt, MinIO в docker-compose.yml
+  - Automatic fallback: MinIO → local filesystem
+  - Тесты file_storage исправлены (13 failing → 13 passing)
+- **IP Check refactoring:** precheck удален из create flow (v2.5)
+  - POST /ip/check возвращает только {status: "created"|"exists"|"pending"}
+  - Per to_change.md #17-18
+- **Тесты:** 171 тест, 100% passing, 0 warnings
+  - Исправлены file_storage, auth, integration flow тесты
+  - pytest.ini: filterwarnings для jose deprecation
+  - conftest.py: удалён кастомный event_loop fixture
+- **Документация:** обновлены все документы до v2.5
+
 ### v2.3 — 05.04.2026 (USPTO Integration, Тесты, Документация)
 - **UsptoPatentClient** → USPTO Open Data Portal v2.3 (`data.uspto.gov`)
   - Grants + Applications fallback стратегия
@@ -1012,5 +1134,5 @@ Value (JSON):
 ---
 
 **Дата последнего обновления:** 2026-04-05
-**Версия:** v2.3
-**Статус:** Active development
+**Версия:** v2.7 (Wallet-Only Auth, Role Upgrade)
+**Статус:** Production Ready

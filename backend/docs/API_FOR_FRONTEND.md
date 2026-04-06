@@ -1,23 +1,47 @@
 # API Reference — для Frontend-разработчиков
 
-> Версия: v2.3 (05.04.2026)
+> **Версия: v3.1 (06.04.2026 — Solana Wallet Required, Audit in IpClaimService.review)**
 > Base URL: `http://localhost:8000/api/v1`
 > Формат: JSON
-> Авторизация: Bearer-токен в заголовке `Authorization`
+> Авторизация: Bearer-токен в заголовве `Authorization`
 
 ---
 
 ## Быстрый старт
 
+### Investor Flow (регистрация + логин через Solana wallet)
+
 ```
-1. Зарегистрироваться   → POST /api/v1/auth/register
-2. Получить OTP          → POST /api/v1/auth/otp-send
-3. Подтвердить OTP       → POST /api/v1/auth/otp-verify  → получишь verified_token
-4. Войти                 → POST /api/v1/auth/login       → получишь access_token + refresh_token
-5. Делать запросы        → Добавляй заголовок: Authorization: Bearer <access_token>
-6. Обновить токен        → POST /api/v1/auth/refresh
-7. Выйти                 → DELETE /api/v1/auth/logout
+1. Регистрация          → POST /api/v1/auth/register          → email + solana_wallet_address
+2. Логин кошельком      → POST /api/v1/auth/login/wallet      → wallet_address → access_token + refresh_token
+3. Получить профиль     → GET  /api/v1/auth/me                → role: "investor"
 ```
+
+### Patent Submission Flow (investor → issuer через OTP)
+
+```
+1. Подать патент         → POST /api/v1/auth/submit-patent         → email + phone → OTP отправлен
+2. Получить OTP          → фронтенд получает otp_sent_to + submission_id
+3. Подтвердить OTP       → POST /api/v1/auth/submit-patent/verify-otp → role: investor → issuer
+4. Токены после upgrade  → новые access_token + refresh_token
+```
+
+### Admin Flow
+
+```
+1. Логин кошельком      → POST /api/v1/auth/login/wallet      → wallet admin → токены
+2. Админ-панель         → GET  /api/v1/users, /api/v1/admin/patents
+3. Review claims        → POST /api/v1/ip-claims/{id}/review
+```
+
+> **ВАЖНО (v3.1):**
+> - ✅ **Регистрация** требует `email` + `solana_wallet_address` (Solana). Пароль больше не нужен.
+> - ✅ **Логин** только через `POST /auth/login/wallet` (email/password удалён).
+> - ✅ **Подача патента** — endpoint `POST /auth/submit-patent` с OTP на email/phone.
+> - ✅ **Upgrade investor → issuer** происходит автоматически после OTP верификации патента.
+> - ❌ **Удалены endpoints:** `/auth/register/wallet`, `/auth/login` (email/password), `/ip-claims` (POST).
+> - ❌ **Удалены endpoints кошельков:** `/users/wallets/*` (wallet-only управление удалено).
+> - **OTP delivery:** По умолчанию OTP приходит на **email** (SMTP). Для SMS: `ENABLE_SMS_OTP=True`.
 
 ---
 
@@ -26,6 +50,7 @@
 | Код | Значение | Когда |
 |-----|----------|-------|
 | 200 | OK | Всё прошло |
+| 201 | Created | Ресурс создан |
 | 400 | Bad Request | Неправильные данные |
 | 401 | Unauthorized | Нет токена / просрочен |
 | 403 | Forbidden | Токен есть, но нет прав |
@@ -42,38 +67,121 @@
 
 ## 1. Auth — `/api/v1/auth`
 
-### 1.1 Регистрация
+### 1.1 Регистрация инвестора
 **POST** `/api/v1/auth/register`
 
-Создаёт пользователя. Для обычных ролей (user, issuer) — дальше нужно подтвердить OTP. Для investor — сразу активен.
+Создаёт пользователя с ролью `investor`. Требует email + Solana wallet address. Пароль не нужен.
 
 | Поле | Тип | Обязательно | Описание |
 |------|-----|:-----------:|----------|
 | `email` | string | ✅ | Email |
-| `password` | string | ✅ | Мин. 8 символов |
-| `role` | string | ✅ | `user`, `issuer`, `investor` |
+| `solana_wallet_address` | string | ✅ | Solana wallet (base58, 32-44 chars) |
+| `role` | string | ❌ | Всегда `investor` |
 | `legal_name` | string | ❌ | ФИО / название организации |
 | `country` | string | ❌ | Код страны: `US`, `RU`, `EP`... |
+
+Ответ (201):
+```json
+{
+  "message": "Investor registered successfully. Login with wallet to get tokens."
+}
+```
+
+> ⚠️ После регистрации нужно залогиниться через `/auth/login/wallet` чтобы получить токены.
+
+---
+
+### 1.2 Логин через кошелёк
+**POST** `/api/v1/auth/login/wallet`
+
+Единственный способ получить токены. Если wallet не найден → 404 (сначала зарегистрируйтесь).
+
+| Поле | Тип | Обязательно | Описание |
+|------|-----|:-----------:|----------|
+| `wallet_address` | string | ✅ | Solana wallet address |
+| `network` | string | ❌ | Сеть (по умолч.: `solana`) |
 
 Ответ (200):
 ```json
 {
-  "message": "User registered",
-  "user_id": "uuid-string"
+  "access_token": "eyJ...",
+  "refresh_token": "eyJ...",
+  "role": "investor",
+  "is_new_user": false
+}
+```
+
+> ⚠️ Если wallet не существует → 404: "Wallet not found. Please register first via POST /api/v1/auth/register"
+
+---
+
+### 1.3 Подача патента (OTP flow)
+**POST** `/api/v1/auth/submit-patent`
+
+> ⚠️ **Только роль `investor`.** После OTP верификации роль меняется на `issuer`.
+
+Запрос требует email + phone для отправки OTP. Фронтенд получает `otp_sent_to` (маскированный email) и `submission_id`.
+
+| Поле | Тип | Обязательно | Описание |
+|------|-----|:-----------:|----------|
+| `patent_number` | string | ✅ | Номер патента |
+| `patent_title` | string | ✅ | Название патента |
+| `claimed_owner_name` | string | ✅ | ФИО владельца |
+| `email` | string | ✅ | Email для OTP |
+| `phone` | string | ✅ | Телефон для OTP (E.164: `+79991234567`) |
+| `description` | string | ❌ | Описание |
+| `jurisdiction` | string | ❌ | `US` (по умолч.), `EP`, `WO` |
+
+Ответ (200):
+```json
+{
+  "message": "OTP sent. Please verify to complete patent submission and upgrade to issuer role.",
+  "otp_sent_to": "n***@gmail.com",
+  "otp_purpose": "patent_submission",
+  "submission_id": "uuid-claim-id"
 }
 ```
 
 ---
 
-### 1.2 Отправка OTP
-**POST** `/api/v1/auth/otp-send`
+### 1.4 Верификация OTP патента
+**POST** `/api/v1/auth/submit-patent/verify-otp`
 
-Отправляет 6-значный код на email.
+Подтверждает OTP код. После успешной верификации:
+- Роль меняется: `investor` → `issuer`
+- IpClaim статус: `submitted` → `prechecked`
+- Возвращаются новые токены
 
 | Поле | Тип | Обязательно | Описание |
 |------|-----|:-----------:|----------|
-| `identifier` | string | ✅ | Email или телефон |
-| `purpose` | string | ✅ | `registration`, `password_reset`... |
+| `email` | string | ✅ | Email, на который отправлен OTP |
+| `code` | string | ✅ | 6-значный OTP код |
+| `submission_id` | string | ✅ | UUID из ответа submit-patent |
+
+Ответ (200):
+```json
+{
+  "verified": true,
+  "role_upgraded": true,
+  "new_role": "issuer",
+  "access_token": "eyJ...",
+  "refresh_token": "eyJ..."
+}
+```
+
+> ⚠️ Максимум 5 попыток. После — блокировка OTP.
+
+---
+
+### 1.5 Отправка OTP (generic)
+**POST** `/api/v1/auth/otp-send`
+
+Универсальный endpoint для отправки OTP. Используется для `issuer_upgrade` и других целей.
+
+| Поле | Тип | Обязательно | Описание |
+|------|-----|:-----------:|----------|
+| `identifier` | string | ✅ | Email или телефон (E.164) |
+| `purpose` | string | ✅ | `register`, `login`, `password_reset`, `issuer_upgrade` |
 
 Ответ (200):
 ```json
@@ -82,16 +190,16 @@
 
 ---
 
-### 1.3 Подтверждение OTP
+### 1.6 Подтверждение OTP (generic)
 **POST** `/api/v1/auth/otp-verify`
 
-Проверяет код. Возвращает `verified_token` (JWT на 10 минут) — нужен для следующих шагов.
+Универсальныйendpoint для OTP верификации.
 
 | Поле | Тип | Обязательно | Описание |
 |------|-----|:-----------:|----------|
-| `identifier` | string | ✅ | Тот же email/телефон |
+| `identifier` | string | ✅ | Email или телефон (E.164) |
 | `code` | string | ✅ | 6 цифр |
-| `purpose` | string | ✅ | Тот же purpose |
+| `purpose` | string | ✅ | `register`, `login`, `password_reset`, `issuer_upgrade` |
 
 Ответ (200):
 ```json
@@ -101,32 +209,11 @@
 }
 ```
 
-> ⚠️ Максимум 5 попыток. После — блокировка.
+> **`issuer_upgrade`** — используется для подтверждения смены роли с `investor` на `issuer` через `/users/upgrade-to-issuer`.
 
 ---
 
-### 1.4 Логин
-**POST** `/api/v1/auth/login`
-
-Вход по email + пароль.
-
-| Поле | Тип | Обязательно |
-|------|-----|:-----------:|
-| `email` | string | ✅ |
-| `password` | string | ✅ |
-
-Ответ (200):
-```json
-{
-  "role": "user",
-  "access_token": "eyJ...",     // жить 30 мин
-  "refresh_token": "eyJ..."     // жить 7 дней
-}
-```
-
----
-
-### 1.5 Обновить токен
+### 1.7 Обновить токен
 **POST** `/api/v1/auth/refresh`
 
 Получить новый `access_token` по `refresh_token`.
@@ -135,42 +222,28 @@
 |------|-----|:-----------:|
 | `refresh_token` | string | ✅ |
 
-Ответ (200) — такой же, как у логина.
-
----
-
-### 1.6 Выйти
-**DELETE** `/api/v1/auth/logout`
-
-Отзывает refresh_token.
-
-| Поле | Тип | Обязательно |
-|------|-----|:-----------:|
-| `refresh_token` | string | ✅ |
-
-Ответ (200):
-```json
-{ "success": true, "message": "Logged out" }
-```
-
----
-
-### 1.7 Текущий пользователь
-**GET** `/api/v1/auth/me`
-
-Требует авторизации (Bearer-токен).
-
 Ответ (200):
 ```json
 {
-  "id": "uuid",
-  "email": "user@example.com",
-  "name": "Иван Иванов",
-  "role": "issuer",
-  "status": "active",
-  "verification_status": "pending"
+  "role": "investor",
+  "access_token": "eyJ...",
+  "refresh_token": "eyJ..."
 }
 ```
+
+---
+
+### 1.8 Выйти
+**DELETE** `/api/v1/auth/logout`
+
+Отзывает refresh_token. Тело запроса: `{"refresh_token": "..."}`
+
+Ответ (200):
+```json
+{ "success": true, "message": "Сессия завершена" }
+```
+
+
 
 ---
 
@@ -188,11 +261,9 @@
 }
 ```
 
-Ответ — обновлённый профиль.
-
 ---
 
-### 2.2 Верификация
+### 2.2 Верификация (требует роль `issuer`)
 
 **Загрузить документы**
 **POST** `/api/v1/users/verification/documents`
@@ -203,56 +274,73 @@
 |------|-----|:-----------:|
 | `id_document` | file | ✅ |
 | `selfie` | file | ✅ |
+| `video` | file | ❌ |
 | `user_address` | string | ✅ |
+
+Ответ (201):
+```json
+{
+  "id": "uuid",
+  "user_id": "uuid",
+  "user_address": "Москва, ул. Примерная, 1",
+  "id_document_url": "/uploads/...",
+  "selfie_url": "/uploads/...",
+  "video_url": "/uploads/...",
+  "status": "pending",
+  "created_at": "2026-04-05T10:00:00Z"
+}
+```
 
 **Проверить статус**
 **GET** `/api/v1/users/verification/status`
 
-Ответ:
+Ответ (200):
 ```json
 {
   "id": "uuid",
   "status": "pending",
-  "patent_name": "...",
-  "patent_address": "...",
-  "user_address": "...",
-  "id_document_url": "/uploads/...",
-  "selfie_url": "/uploads/...",
   "reviewer_notes": null,
-  "created_at": "2026-04-05T10:00:00Z",
-  "updated_at": "2026-04-05T10:00:00Z"
+  "created_at": "2026-04-05T10:00:00Z"
 }
 ```
 
-**Рецензия (admin/compliance_officer)**
-**POST** `/api/v1/users/verification/review/{case_id}`
+Статусы: `not_started` → `pending` → `approved` / `rejected`
 
-Формат: `multipart/form-data`
-| Поле | Тип | Обязательно |
-|------|-----|:-----------:|
-| `decision` | string | ✅ | `approve`, `reject`, `request_more_data` |
-| `notes` | string | ❌ | Комментарий ревьюера |
+> ⚠️ После `rejected` можно перезалить документы. После `approved` — повторная загрузка запрещена (400).
+> ⚠️ Endpoint `/users/verification/review/{id}` удалён. Admin review верификации происходит через отдельный pipeline (не REST).
+
+---
+
+### 2.3 Обновить роль до issuer
+**POST** `/api/v1/users/upgrade-to-issuer`
+
+Альтернативный способ upgrade через OTP (не через патент).
+
+Запускает OTP flow на email пользователя. После OTP верификации (через `/auth/otp-verify` с `purpose=issuer_upgrade`) роль меняется на `issuer`.
+
+Ответ (200):
+```json
+{
+  "message": "OTP sent to your email. Verify OTP to complete upgrade to issuer."
+}
+```
+
+---
+
+### 2.4 Удалить аккаунт
+**DELETE** `/api/v1/users/account`
+
+Soft-delete: статус меняется на `blocked`.
+
+> ⚠️ Issuers не могут удалить аккаунт, если есть активные IP claims.
 
 ---
 
 ## 3. IP Claims — `/api/v1/ip-claims`
 
-### 3.1 Создать claim
-**POST** `/api/v1/ip-claims`
+> ⚠️ Создание claim теперь через `POST /auth/submit-patent` (с OTP flow).
 
-| Поле | Тип | Обязательно | Описание |
-|------|-----|:-----------:|----------|
-| `patent_number` | string | ✅ | Номер патента |
-| `claimed_owner_name` | string | ✅ | Кто заявляет право |
-| `patent_title` | string | ❌ | Название |
-| `description` | string | ❌ | Описание |
-| `jurisdiction` | string | ❌ | `US`, `EP`, `WO` |
-
-Ответ — созданный claim с `id`, `status`, `created_at`.
-
----
-
-### 3.2 Список claims
+### 3.1 Список claims
 **GET** `/api/v1/ip-claims?status=submitted&skip=0&limit=20`
 
 | Параметр | Тип | Описание |
@@ -283,14 +371,12 @@
 
 ---
 
-### 3.3 Один claim
+### 3.2 Один claim
 **GET** `/api/v1/ip-claims/{claim_id}`
-
-Ответ — полный объект claim.
 
 ---
 
-### 3.4 Загрузить документ
+### 3.3 Загрузить документ
 **POST** `/api/v1/ip-claims/{claim_id}/documents`
 
 Формат: `multipart/form-data`
@@ -302,10 +388,10 @@
 
 ---
 
-### 3.5 Рецензия на claim
+### 3.4 Рецензия на claim
 **POST** `/api/v1/ip-claims/{claim_id}/review`
 
-Только `admin` / `compliance_officer`.
+Только `admin`.
 
 | Поле | Тип | Обязательно |
 |------|-----|:-----------:|
@@ -319,14 +405,11 @@
 ### 4.1 Проверка патента (международная)
 **POST** `/api/v1/patents/precheck/international`
 
-Проверяет, существует ли патент в международных реестрах (USPTO, EPO, WIPO). Возвращает нормализованные данные + рекомендацию по токенизации.
-
 | Поле | Тип | Обязательно | Описание |
 |------|-----|:-----------:|----------|
 | `patent_number` | string | ✅ | Номер патента |
 | `country_code` | string | ✅ | `US`, `EP`, `WO` |
 | `kind_code` | string | ❌ | Kind code (B2, A1...) |
-| `search_mode` | string | ❌ | `exact` (по умолч.) или `fuzzy` |
 | `include_analytics` | bool | ❌ | Включить цитирования, классы |
 
 Ответ (200):
@@ -367,8 +450,6 @@
 ### 4.2 Международный поиск
 **POST** `/api/v1/patents/search/international`
 
-Поиск по ключевым словам в нескольких реестрах.
-
 | Поле | Тип | Обязательно | Описание |
 |------|-----|:-----------:|----------|
 | `query` | string | ✅ | Ключевые слова |
@@ -378,52 +459,15 @@
 | `page` | int | ❌ | Страница (по умолч. 1) |
 | `per_page` | int | ❌ | Размер (1–100, по умолч. 20) |
 
-Ответ:
-```json
-{
-  "total": 150,
-  "page": 1,
-  "per_page": 20,
-  "total_pages": 8,
-  "results": [
-    {
-      "source": "USPTO",
-      "source_id": "1234567",
-      "country_code": "US",
-      "title": "AI-based System",
-      "publication_date": "2022-06-15",
-      "status": "granted",
-      "assignees": ["Acme Corp"]
-    }
-  ],
-  "sources_queried": ["USPTO"],
-  "deduplicated_count": 3
-}
-```
-
 ---
 
 ### 4.3 Обогащение claim
 **POST** `/api/v1/patents/ip-claims/{claim_id}/enrich/international`
 
-Обновляет claim данными из внешних API. Только владелец claim.
-
 | Поле | Тип | Обязательно | Описание |
 |------|-----|:-----------:|----------|
 | `force_refresh` | bool | ❌ | Игнорировать кэш |
 | `sources` | string[] | ❌ | `["USPTO", "PATENTSVIEW"]` |
-
-Ответ:
-```json
-{
-  "claim_id": "uuid",
-  "enriched": true,
-  "sources_used": ["USPTO"],
-  "normalized_record": { ... },
-  "updated_fields": ["patent_title", "abstract"],
-  "warnings": []
-}
-```
 
 ---
 
@@ -431,17 +475,6 @@
 **GET** `/api/v1/patents/health`
 
 Без авторизации.
-
-```json
-{
-  "status": "healthy",
-  "module": "ip_intel",
-  "sources": {
-    "USPTO": { "available": true, "cache_ttl_hours": 72 },
-    "PATENTSVIEW": { "available": true, "cache_ttl_hours": 48 }
-  }
-}
-```
 
 ---
 
@@ -464,8 +497,6 @@
 
 ### 5.2 Детали
 **GET** `/api/v1/users/{user_id}`
-
-Возвращает: профиль, KYC статус, кошельки, верификация.
 
 ---
 
@@ -490,35 +521,22 @@
 | `status` | string | ✅ | `active`, `suspended`, `blocked`, `rejected` |
 | `reason` | string | ✅ | Мин. 5 символов |
 
-Разрешённые переходы:
-- `active` ↔ `suspended`
-- `active` → `blocked`
-- `suspended` → `blocked`
-
 ---
 
 ### 5.5 Удалить (мягкое)
 **DELETE** `/api/v1/users/{user_id}`
 
-Устанавливает статус `blocked`. Физически не удаляет.
-
 ---
 
 ## 6. Admin — Патенты — `/api/v1/admin/patents`
 
-Роли: `admin`, `compliance_officer`.
+Роль: `admin`.
 
 ### 6.1 Список
 **GET** `/api/v1/admin/patents?skip=0&limit=20&status=under_review&jurisdiction=US`
 
----
-
 ### 6.2 Детали
 **GET** `/api/v1/admin/patents/{patent_id}`
-
-Возвращает: патент, профиль владельца, кол-во документов, рецензии.
-
----
 
 ### 6.3 Сменить статус
 **PUT** `/api/v1/admin/patents/{patent_id}/status`
@@ -536,21 +554,37 @@
 |-------|------|----------|
 | GET | `/api/v1/ping` | `{"message": "pong"}` |
 | GET | `/health` | Health check всего приложения |
-| GET | `/` | `{"project": "...", "version": "v2.3"}` |
+| GET | `/` | `{"status": "ok", "version": "1.0.0"}` |
 
 ---
 
 ## Роли — что могут
 
-| Endpoint | user | issuer | investor | compliance_officer | admin |
-|----------|:----:|:------:|:--------:|:------------------:|:-----:|
-| Auth (все) | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `/users/profile` | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `/users/verification/*` | ✅ | ✅ | ❌ | ✅ (review) | ✅ (review) |
-| `/ip-claims` (свой) | ✅ | ✅ | ❌ | ❌ | ❌ |
-| `/ip-claims/*/review` | ❌ | ❌ | ❌ | ✅ | ✅ |
-| `/patents/precheck` | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `/patents/search` | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `/patents/*/enrich` | ✅ (свой) | ✅ (свой) | ❌ | ❌ | ❌ |
-| `/users` (admin CRUD) | ❌ | ❌ | ❌ | ❌ | ✅ |
-| `/admin/patents` | ❌ | ❌ | ❌ | ✅ | ✅ |
+| Endpoint | issuer | investor | admin |
+|----------|:------:|:--------:|:-----:|
+| Auth (все) | ✅ | ✅ | ✅ |
+| `/auth/register` | ❌ | ✅ | ❌ |
+| `/auth/login/wallet` | ✅ | ✅ | ✅ |
+| `/auth/submit-patent` | ❌ | ✅ | ❌ |
+| `/auth/submit-patent/verify-otp` | ❌ | ✅ | ❌ |
+| `/users/profile` | ✅ | ✅ | ✅ |
+| `/users/verification/documents` | ✅ | ❌ | ❌ |
+| `/users/verification/status` | ✅ | ✅ | ✅ |
+| `/users/upgrade-to-issuer` | ❌ | ✅ | ✅ |
+| `/users/account` (DELETE) | ✅ | ✅ | ✅ |
+| `/ip-claims` (list, get, docs) | ✅ | ✅ | ✅ |
+| `/ip-claims/*/review` | ❌ | ❌ | ✅ |
+| `/patents/precheck` | ✅ | ✅ | ✅ |
+| `/patents/search` | ✅ | ✅ | ✅ |
+| `/patents/*/enrich` | ✅ (свой) | ❌ | ❌ |
+| `/users` (admin CRUD) | ❌ | ❌ | ✅ |
+| `/admin/patents` | ❌ | ❌ | ✅ |
+
+> **Примечание (v3.1, 06.04.2026):**
+> - Роли: `investor`, `issuer`, `admin`. (`user`, `compliance_officer` удалены).
+> - Investor → Issuer upgrade через `POST /auth/submit-patent` + OTP или `POST /users/upgrade-to-issuer` + OTP.
+> - **Wallet эндпоинты удалены** (`/users/wallets/*`). Управление кошельками только при регистрации и логине.
+> - **Регистрация** требует `email` + `solana_wallet_address`. `user_id` больше не возвращается.
+> - **POST `/ip-claims` удалён.** Создание claim через `POST /auth/submit-patent` (с OTP flow).
+> - **`/users/verification/review/{id}` удалён.** Admin review верификации — отдельный pipeline.
+> - **AuditLog** автоматически пишется при review IP claim (`IpClaimService.review()`).

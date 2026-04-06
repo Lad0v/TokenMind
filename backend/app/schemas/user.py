@@ -43,8 +43,54 @@ class VerificationCaseRead(BaseModel):
     user_address: Optional[str] = None
     id_document_url: Optional[str] = None
     selfie_url: Optional[str] = None
+    video_url: Optional[str] = None
     status: str
     reviewer_notes: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# New schemas for verification flow (to_change.md #19)
+class PatentOwnerInfo(BaseModel):
+    """Patent owner information from database."""
+    patent_number: str
+    title: str
+    owner_name: Optional[str] = None
+    owner_address: Optional[str] = None
+
+
+class VerificationPrecheckRequest(BaseModel):
+    """Request to start verification with patent data."""
+    patent_number: str
+    user_address: str  # User's actual address
+
+
+class VerificationPrecheckResponse(BaseModel):
+    """Response with patent owner info for verification."""
+    patent_number: str
+    patent_title: str
+    owner_name_from_patent: Optional[str] = None
+    owner_address_from_patent: Optional[str] = None
+    message: str
+
+
+# Wallet Link schemas
+class WalletLinkCreate(BaseModel):
+    """Request to add a wallet address."""
+    wallet_address: str
+    network: str = "solana"
+    is_primary: bool = False
+
+
+class WalletLinkRead(BaseModel):
+    """Wallet link information."""
+    id: uuid.UUID
+    user_id: uuid.UUID
+    wallet_address: str
+    network: str
+    is_primary: bool
     created_at: datetime
     updated_at: datetime
 

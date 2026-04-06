@@ -107,6 +107,8 @@ class IpClaimService:
         reviewer_id: uuid.UUID,
         payload: IpClaimReviewRequest,
     ) -> IpClaim:
+        from app.services.audit_service import AuditService
+
         db.add(
             IpReview(
                 ip_claim_id=claim.id,
@@ -125,4 +127,14 @@ class IpClaimService:
 
         await db.flush()
         await db.refresh(claim)
+
+        await AuditService.write(
+            db,
+            action="ip_claim.reviewed",
+            entity_type="ip_claim",
+            entity_id=str(claim.id),
+            actor_id=reviewer_id,
+            payload={"decision": payload.decision, "new_status": claim.status.value if hasattr(claim.status, 'value') else claim.status},
+        )
+
         return claim

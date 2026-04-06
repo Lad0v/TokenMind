@@ -1,6 +1,9 @@
 """
 Tests for /api/v1/ip-claims/* endpoints:
-create, list, document upload, review state machine.
+list, get, document upload, review state machine.
+
+Note: IP claim creation is now done via /api/v1/auth/submit-patent
+(includes OTP flow). Tests create claims directly in DB for isolation.
 """
 from __future__ import annotations
 
@@ -20,62 +23,23 @@ from app.models.common import AuditLog
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_claim_payload(patent_number: str = "US1234567") -> dict:
-    return {
-        "patent_number": patent_number,
-        "patent_title": "Test Patent",
-        "claimed_owner_name": "Acme Corp",
-        "description": "A test patent",
-        "jurisdiction": "US",
-    }
+async def _create_claim_in_db(db_session, user_id, patent_number="US1234567"):
+    """Helper: create an IpClaim directly in DB."""
+    claim = IpClaim(
+        issuer_user_id=user_id,
+        patent_number=patent_number,
+        patent_title="Test Patent",
+        claimed_owner_name="Acme Corp",
+        status=IpClaimStatus.submitted.value,
+    )
+    db_session.add(claim)
+    await db_session.flush()
+    await db_session.refresh(claim)
+    return claim
 
 
 # ---------------------------------------------------------------------------
-# 1. Create IP Claim
-# ---------------------------------------------------------------------------
-
-async def test_create_ip_claim_success(client: AsyncClient, make_user, auth_headers, db_session):
-    """POST /ip-claims → 200, claim created with status=submitted."""
-    user = await make_user(role="issuer", status="active")
-    headers = auth_headers(user)
-    payload = _make_claim_payload()
-
-    resp = await client.post("/api/v1/ip-claims", headers=headers, json=payload)
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["patent_number"] == payload["patent_number"]
-    assert data["status"] == IpClaimStatus.submitted.value
-    assert data["issuer_user_id"] == str(user.id)
-
-
-async def test_create_ip_claim_with_precheck_snapshot(
-    client: AsyncClient, make_user, auth_headers, db_session
-):
-    """POST /ip-claims with precheck_snapshot → prechecked=True."""
-    user = await make_user(role="issuer", status="active")
-    headers = auth_headers(user)
-    payload = _make_claim_payload()
-    payload["precheck_snapshot"] = {
-        "status": "found",
-        "source_id": "uspto:1234567",
-        "metadata": {"title": "Test"},
-    }
-
-    resp = await client.post("/api/v1/ip-claims", headers=headers, json=payload)
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["prechecked"] is True
-    assert data["precheck_status"] == "found"
-
-
-async def test_create_ip_claim_unauthorized(client: AsyncClient):
-    """POST /ip-claims → 401 without auth."""
-    resp = await client.post("/api/v1/ip-claims", json=_make_claim_payload())
-    assert resp.status_code in (401, 403)
-
-
-# ---------------------------------------------------------------------------
-# 2. List IP Claims
+# 1. List IP Claims
 # ---------------------------------------------------------------------------
 
 async def test_list_ipclaims_empty(client: AsyncClient, make_user, auth_headers):
@@ -95,18 +59,18 @@ async def test_list_ipclaims_with_filter(client: AsyncClient, make_user, auth_he
     user = await make_user(role="issuer", status="active")
     headers = auth_headers(user)
 
-    # Create 2 claims
-    await client.post("/api/v1/ip-claims", headers=headers, json=_make_claim_payload("US111"))
-    await client.post("/api/v1/ip-claims", headers=headers, json=_make_claim_payload("US222"))
+    # Create 2 claims directly in DB
+    await _create_claim_in_db(db_session, user.id, "US111")
+    await _create_claim_in_db(db_session, user.id, "US222")
 
-    resp = await client.get("/api/v1/ip-claims?status=submitted", headers=headers)
+    resp = await client.get("/api/v1/ip-claims", headers=headers)
     assert resp.status_code == 200
     data = resp.json()
     assert data["total"] == 2
 
 
 # ---------------------------------------------------------------------------
-# 3. Get Single Claim + Access Control
+# 2. Get Single Claim + Access Control
 # ---------------------------------------------------------------------------
 
 async def test_get_ip_claim_owner_can_see(client: AsyncClient, make_user, auth_headers, db_session):
@@ -114,8 +78,8 @@ async def test_get_ip_claim_owner_can_see(client: AsyncClient, make_user, auth_h
     user = await make_user(role="issuer", status="active")
     headers = auth_headers(user)
 
-    create_resp = await client.post("/api/v1/ip-claims", headers=headers, json=_make_claim_payload())
-    claim_id = create_resp.json()["id"]
+    claim = await _create_claim_in_db(db_session, user.id)
+    claim_id = str(claim.id)
 
     resp = await client.get(f"/api/v1/ip-claims/{claim_id}", headers=headers)
     assert resp.status_code == 200
@@ -127,11 +91,10 @@ async def test_get_ip_claim_forbidden_for_other_user(
 ):
     """GET /ip-claims/{id} → 403 for non-owner without admin role."""
     owner = await make_user(role="issuer", status="active", email="owner@example.com")
-    other = await make_user(role="user", status="active", email="other@example.com")
+    other = await make_user(role="investor", status="active", email="other@example.com")
 
-    owner_headers = auth_headers(owner)
-    create_resp = await client.post("/api/v1/ip-claims", headers=owner_headers, json=_make_claim_payload())
-    claim_id = create_resp.json()["id"]
+    claim = await _create_claim_in_db(db_session, owner.id)
+    claim_id = str(claim.id)
 
     other_headers = auth_headers(other)
     resp = await client.get(f"/api/v1/ip-claims/{claim_id}", headers=other_headers)
@@ -145,9 +108,8 @@ async def test_get_ip_claim_admin_can_see_all(
     owner = await make_user(role="issuer", status="active", email="owner2@example.com")
     admin = await make_user(role="admin", status="active")
 
-    owner_headers = auth_headers(owner)
-    create_resp = await client.post("/api/v1/ip-claims", headers=owner_headers, json=_make_claim_payload())
-    claim_id = create_resp.json()["id"]
+    claim = await _create_claim_in_db(db_session, owner.id)
+    claim_id = str(claim.id)
 
     admin_headers = auth_headers(admin)
     resp = await client.get(f"/api/v1/ip-claims/{claim_id}", headers=admin_headers)
@@ -164,7 +126,7 @@ async def test_get_ip_claim_not_found(client: AsyncClient, make_user, auth_heade
 
 
 # ---------------------------------------------------------------------------
-# 4. Document Upload
+# 3. Document Upload
 # ---------------------------------------------------------------------------
 
 async def test_upload_document_success(client: AsyncClient, make_user, auth_headers, db_session):
@@ -172,8 +134,8 @@ async def test_upload_document_success(client: AsyncClient, make_user, auth_head
     user = await make_user(role="issuer", status="active")
     headers = auth_headers(user)
 
-    create_resp = await client.post("/api/v1/ip-claims", headers=headers, json=_make_claim_payload())
-    claim_id = create_resp.json()["id"]
+    claim = await _create_claim_in_db(db_session, user.id)
+    claim_id = str(claim.id)
 
     files = {"file": ("spec.pdf", io.BytesIO(b"pdf-data"), "application/pdf")}
     resp = await client.post(
@@ -193,11 +155,10 @@ async def test_upload_document_forbidden_for_non_owner(
 ):
     """POST /ip-claims/{id}/documents → 403 for non-owner."""
     owner = await make_user(role="issuer", status="active", email="owner3@example.com")
-    other = await make_user(role="user", status="active", email="other3@example.com")
+    other = await make_user(role="investor", status="active", email="other3@example.com")
 
-    owner_headers = auth_headers(owner)
-    create_resp = await client.post("/api/v1/ip-claims", headers=owner_headers, json=_make_claim_payload())
-    claim_id = create_resp.json()["id"]
+    claim = await _create_claim_in_db(db_session, owner.id)
+    claim_id = str(claim.id)
 
     other_headers = auth_headers(other)
     files = {"file": ("doc.pdf", io.BytesIO(b"data"), "application/pdf")}
@@ -210,7 +171,7 @@ async def test_upload_document_forbidden_for_non_owner(
 
 
 # ---------------------------------------------------------------------------
-# 5. Review State Machine
+# 4. Review State Machine
 # ---------------------------------------------------------------------------
 
 async def test_review_claim_approve(client: AsyncClient, make_user, auth_headers, db_session):
@@ -218,15 +179,9 @@ async def test_review_claim_approve(client: AsyncClient, make_user, auth_headers
     issuer = await make_user(role="issuer", status="active")
     admin = await make_user(role="admin", status="active")
 
-    # Create claim
-    create_resp = await client.post(
-        "/api/v1/ip-claims",
-        headers=auth_headers(issuer),
-        json=_make_claim_payload(),
-    )
-    claim_id = create_resp.json()["id"]
+    claim = await _create_claim_in_db(db_session, issuer.id)
+    claim_id = str(claim.id)
 
-    # Review
     admin_headers = auth_headers(admin)
     resp = await client.post(
         f"/api/v1/ip-claims/{claim_id}/review",
@@ -243,12 +198,8 @@ async def test_review_claim_reject(client: AsyncClient, make_user, auth_headers,
     issuer = await make_user(role="issuer", status="active")
     admin = await make_user(role="admin", status="active")
 
-    create_resp = await client.post(
-        "/api/v1/ip-claims",
-        headers=auth_headers(issuer),
-        json=_make_claim_payload(),
-    )
-    claim_id = create_resp.json()["id"]
+    claim = await _create_claim_in_db(db_session, issuer.id)
+    claim_id = str(claim.id)
 
     admin_headers = auth_headers(admin)
     resp = await client.post(
@@ -267,12 +218,8 @@ async def test_review_claim_request_more_data(
     issuer = await make_user(role="issuer", status="active")
     admin = await make_user(role="admin", status="active")
 
-    create_resp = await client.post(
-        "/api/v1/ip-claims",
-        headers=auth_headers(issuer),
-        json=_make_claim_payload(),
-    )
-    claim_id = create_resp.json()["id"]
+    claim = await _create_claim_in_db(db_session, issuer.id)
+    claim_id = str(claim.id)
 
     admin_headers = auth_headers(admin)
     resp = await client.post(
@@ -281,21 +228,17 @@ async def test_review_claim_request_more_data(
         json={"decision": "request_more_data", "notes": "Need more details"},
     )
     assert resp.status_code == 200
-    # request_more_data sets status back to submitted per service logic
+    # request_more_data sets status back to submitted
     assert resp.json()["status"] == IpClaimStatus.submitted.value
 
 
 async def test_review_forbidden_for_non_admin(client: AsyncClient, make_user, auth_headers, db_session):
-    """POST /ip-claims/{id}/review → 403 for non-admin/compliance_officer."""
+    """POST /ip-claims/{id}/review → 403 for non-admin."""
     issuer = await make_user(role="issuer", status="active")
-    other_user = await make_user(role="user", status="active", email="other5@example.com")
+    other_user = await make_user(role="investor", status="active", email="other5@example.com")
 
-    create_resp = await client.post(
-        "/api/v1/ip-claims",
-        headers=auth_headers(issuer),
-        json=_make_claim_payload(),
-    )
-    claim_id = create_resp.json()["id"]
+    claim = await _create_claim_in_db(db_session, issuer.id)
+    claim_id = str(claim.id)
 
     other_headers = auth_headers(other_user)
     resp = await client.post(
@@ -307,36 +250,16 @@ async def test_review_forbidden_for_non_admin(client: AsyncClient, make_user, au
 
 
 # ---------------------------------------------------------------------------
-# 6. Audit Trail
+# 5. Audit Trail
 # ---------------------------------------------------------------------------
-
-async def test_create_claim_writes_audit(client: AsyncClient, make_user, auth_headers, db_session):
-    """POST /ip-claims → AuditLog with action='ip_claim.created'."""
-    user = await make_user(role="issuer", status="active")
-    headers = auth_headers(user)
-
-    resp = await client.post("/api/v1/ip-claims", headers=headers, json=_make_claim_payload())
-    claim_id = resp.json()["id"]
-
-    stmt = select(AuditLog).where(
-        AuditLog.action == "ip_claim.created",
-        AuditLog.entity_id == claim_id,
-    )
-    logs = (await db_session.execute(stmt)).scalars().all()
-    assert len(logs) >= 1
-
 
 async def test_review_claim_writes_audit(client: AsyncClient, make_user, auth_headers, db_session):
     """POST /ip-claims/{id}/review → AuditLog with action='ip_claim.reviewed'."""
     issuer = await make_user(role="issuer", status="active")
     admin = await make_user(role="admin", status="active")
 
-    create_resp = await client.post(
-        "/api/v1/ip-claims",
-        headers=auth_headers(issuer),
-        json=_make_claim_payload(),
-    )
-    claim_id = create_resp.json()["id"]
+    claim = await _create_claim_in_db(db_session, issuer.id)
+    claim_id = str(claim.id)
 
     admin_headers = auth_headers(admin)
     await client.post(

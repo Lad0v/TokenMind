@@ -1,6 +1,6 @@
 """Admin patent management endpoints.
 
-Provides CRUD for patents with RBAC (admin, compliance_officer):
+Provides CRUD for patents with RBAC (admin):
 - GET    /api/v1/admin/patents                   — list patents with pagination
 - GET    /api/v1/admin/patents/{patent_id}       — patent detail with relations
 - PUT    /api/v1/admin/patents/{patent_id}/status — change patent status
@@ -98,7 +98,7 @@ async def list_patents(
     jurisdiction: str | None = Query(None),
     owner_user_id: uuid.UUID | None = Query(None),
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(require_roles("admin", "compliance_officer")),
+    _admin: User = Depends(require_roles("admin")),
 ):
     """List patents with filtering and pagination."""
     patents, total = await AdminPatentService.list_patents_admin(
@@ -124,7 +124,7 @@ async def list_patents(
 async def get_patent(
     patent_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(require_roles("admin", "compliance_officer")),
+    _admin: User = Depends(require_roles("admin")),
 ):
     """Get patent detail with relations."""
     patent = await AdminPatentService.get_patent_admin_detail(db=db, patent_id=patent_id)
@@ -139,7 +139,7 @@ async def change_patent_status(
     patent_id: uuid.UUID,
     payload: PatentStatusUpdateRequest,
     db: AsyncSession = Depends(get_db),
-    admin_user: User = Depends(require_roles("admin", "compliance_officer")),
+    admin_user: User = Depends(require_roles("admin")),
 ):
     """Change patent status with audit logging."""
     patent = await AdminPatentService.change_patent_status(

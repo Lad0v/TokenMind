@@ -60,13 +60,14 @@ async def test_save_verification_documents_creates_files():
     id_file = _make_upload_file("id.png", b"fake-id-data")
     selfie_file = _make_upload_file("selfie.png", b"fake-selfie-data")
 
-    id_path, selfie_path = await save_verification_documents(
+    id_path, selfie_path, video_path = await save_verification_documents(
         user_id, id_file, selfie_file, base_dir=TEST_BASE_DIR
     )
 
     # Files exist
     assert Path(id_path).exists()
     assert Path(selfie_path).exists()
+    assert video_path is None
 
 
 @pytest.mark.asyncio
@@ -79,12 +80,13 @@ async def test_save_verification_documents_content_integrity():
     id_file = _make_upload_file("id.png", id_content)
     selfie_file = _make_upload_file("selfie.png", selfie_content)
 
-    id_path, selfie_path = await save_verification_documents(
+    id_path, selfie_path, video_path = await save_verification_documents(
         user_id, id_file, selfie_file, base_dir=TEST_BASE_DIR
     )
 
     assert Path(id_path).read_bytes() == id_content
     assert Path(selfie_path).read_bytes() == selfie_content
+    assert video_path is None
 
 
 @pytest.mark.asyncio
@@ -94,7 +96,7 @@ async def test_save_verification_documents_directory_structure():
     id_file = _make_upload_file("id.png", b"data")
     selfie_file = _make_upload_file("selfie.png", b"data")
 
-    id_path, selfie_path = await save_verification_documents(
+    id_path, selfie_path, video_path = await save_verification_documents(
         user_id, id_file, selfie_file, base_dir=TEST_BASE_DIR
     )
 
@@ -111,7 +113,7 @@ async def test_save_verification_documents_generates_filename():
     id_file = _make_upload_file(None, b"data")
     selfie_file = _make_upload_file(None, b"data")
 
-    id_path, selfie_path = await save_verification_documents(
+    id_path, selfie_path, video_path = await save_verification_documents(
         user_id, id_file, selfie_file, base_dir=TEST_BASE_DIR
     )
 
@@ -131,7 +133,7 @@ async def test_save_verification_documents_creates_dir_if_missing():
     # Ensure base dir doesn't exist
     assert not Path(TEST_BASE_DIR).exists()
 
-    id_path, selfie_path = await save_verification_documents(
+    id_path, selfie_path, video_path = await save_verification_documents(
         user_id, id_file, selfie_file, base_dir=TEST_BASE_DIR
     )
 
@@ -188,8 +190,9 @@ async def test_save_ip_claim_document_generates_filename():
     file_path = await save_ip_claim_document(claim_id, doc_file, base_dir=TEST_BASE_DIR)
 
     filename = Path(file_path).name
-    assert filename.startswith("document-")
-    assert filename.endswith(".bin")
+    # Generated filename: {uuid}_document (no original filename)
+    assert "document" in filename
+    assert filename.endswith(".bin") is False  # No extension added
 
 
 @pytest.mark.asyncio
@@ -241,7 +244,7 @@ async def test_paths_use_forward_slashes():
     id_file = _make_upload_file("id.png", b"data")
     selfie_file = _make_upload_file("selfie.png", b"data")
 
-    id_path, selfie_path = await save_verification_documents(
+    id_path, selfie_path, video_path = await save_verification_documents(
         user_id, id_file, selfie_file, base_dir=TEST_BASE_DIR
     )
 

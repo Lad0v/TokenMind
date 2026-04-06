@@ -30,10 +30,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # --- Startup ---
     logger.info("Starting %s v%s", settings.PROJECT_NAME, settings.VERSION)
 
-    # Create database tables (development only; use Alembic in production)
-    if settings.DEBUG:
-        logger.info("DEBUG mode: creating database tables")
-        await init_db()
+    # Database tables are managed by Alembic migrations
+    # init_db() is disabled even in DEBUG mode to avoid conflicts with Alembic
+    # if settings.DEBUG:
+    #     logger.info("DEBUG mode: creating database tables")
+    #     await init_db()
 
     logger.info("Application ready")
 

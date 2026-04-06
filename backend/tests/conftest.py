@@ -6,7 +6,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import AsyncGenerator
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
@@ -15,7 +15,7 @@ from jose import jwt
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import Settings
-from app.core.database import Base, get_db
+from app.core.database import Base, get_db, get_redis
 from app.core.security import create_access_token, create_refresh_token
 from app.main import app
 from app.models.user import User, UserRole, UserStatus
@@ -23,15 +23,32 @@ from app.services.user_service import UserService
 
 
 # ---------------------------------------------------------------------------
-# Engine & Session
+# Redis Mock — global override for get_redis
 # ---------------------------------------------------------------------------
 
-@pytest.fixture(scope="session")
-def event_loop():
-    import asyncio
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
+@pytest_asyncio.fixture(scope="function")
+async def mock_redis_client():
+    """Provide a mock Redis client and override get_redis dependency."""
+    from unittest.mock import AsyncMock
+
+    mock_redis = AsyncMock()
+    mock_redis.get = AsyncMock(return_value=None)
+    mock_redis.set = AsyncMock(return_value=True)
+    mock_redis.exists = AsyncMock(return_value=False)
+    mock_redis.delete = AsyncMock(return_value=True)
+    mock_redis.pipeline = MagicMock(return_value=AsyncMock())
+
+    async def _get_redis_override():
+        return mock_redis
+
+    app.dependency_overrides[get_redis] = _get_redis_override
+    yield mock_redis
+    app.dependency_overrides.pop(get_redis, None)
+
+
+# ---------------------------------------------------------------------------
+# Engine & Session
+# ---------------------------------------------------------------------------
 
 
 @pytest_asyncio.fixture(scope="function")
@@ -60,6 +77,37 @@ async def db_session(async_engine) -> AsyncGenerator[AsyncSession, None]:
             await session.close()
 
 
+# ---------------------------------------------------------------------------
+# Redis Mock — function-scoped autouse for all tests
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="function", autouse=True)
+def _auto_mock_redis_per_test():
+    """Auto-mock Redis for each test to prevent real connection attempts."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    mock_redis = AsyncMock()
+    mock_redis.get = AsyncMock(return_value=None)
+    mock_redis.set = AsyncMock(return_value=True)
+    mock_redis.exists = AsyncMock(return_value=False)
+    mock_redis.delete = AsyncMock(return_value=True)
+    mock_redis.pipeline = MagicMock(return_value=AsyncMock())
+
+    async def _get_redis_override():
+        return mock_redis
+
+    app.dependency_overrides[get_redis] = _get_redis_override
+
+    # Mock email delivery globally for tests
+    email_patcher = patch("app.services.otp_service.send_email_otp")
+    email_patcher.start()
+
+    yield
+
+    email_patcher.stop()
+    app.dependency_overrides.pop(get_redis, None)
+
+
 # Override FastAPI dependency
 @pytest_asyncio.fixture(scope="function")
 async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
@@ -83,7 +131,7 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
 
 @pytest_asyncio.fixture
 async def make_user(db_session: AsyncSession):
-    """Factory: make_user(role='user', status='active', **kwargs) -> User."""
+    """Factory: make_user(role='investor', status='active', **kwargs) -> User."""
 
     async def _make(
         role: str = "user",
@@ -116,10 +164,13 @@ def auth_headers(make_user, db_session):
     """
     Fixture factory: auth_headers(user) -> {"Authorization": "Bearer <token>"}.
     Usage:  headers = auth_headers(await make_user())  -- use inside test.
+
+    Note: tokens are created with subject=user.id (UUID), not email.
     """
+    from app.core.security import create_access_token
 
     def _build(user: User) -> dict[str, str]:
-        token = create_access_token(subject=user.email)
+        token = create_access_token(subject=str(user.id))
         return {"Authorization": f"Bearer {token}"}
 
     return _build

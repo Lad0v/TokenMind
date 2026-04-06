@@ -1,7 +1,8 @@
 """OTP generation, Redis storage, verification and delivery dispatch.
 
 OTP codes are stored in Redis as HMAC-SHA256 hashes with TTL-based expiry.
-Delivery is dispatched to email (SMTP) or phone (SMS stub) based on identifier format.
+Delivery is dispatched to email (SMTP) or phone (SMS) based on identifier format
+and ENABLE_SMS_OTP configuration flag.
 """
 
 from __future__ import annotations
@@ -9,14 +10,16 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets
 import time
-from typing import Any, Literal
+from typing import Literal
 
 from fastapi import HTTPException
 from redis.asyncio import Redis
 
+from app.core.config import settings
 from app.services.otp_sender import send_email_otp, send_sms_otp
 
 # ============================================================================
@@ -25,8 +28,17 @@ from app.services.otp_sender import send_email_otp, send_sms_otp
 
 OTP_TTL = 300  # 5 minutes for Redis OTP
 MAX_ATTEMPTS = 5
-VALID_PURPOSES = {"register", "login", "password_reset"}
+VALID_PURPOSES = {
+    "register",
+    "login",
+    "password_reset",
+    "issuer_upgrade",
+    "patent_submission",
+    "patent_submission_phone",
+}
 HMAC_SECRET = os.environ.get("OTP_HMAC_SECRET", "change-me")
+
+logger = logging.getLogger(__name__)
 
 # ============================================================================
 # Identifier classification
@@ -94,6 +106,11 @@ async def generate_and_send_otp(
 ) -> None:
     """Generate 6-digit OTP, store in Redis, and send via email or phone.
 
+    Delivery logic:
+    - Email identifier → always send via email (SMTP)
+    - Phone identifier + ENABLE_SMS_OTP=True → send via SMS
+    - Phone identifier + ENABLE_SMS_OTP=False → fallback to email with warning log
+
     Args:
         redis: Redis connection (redis.asyncio).
         identifier: Email address or E.164 phone number.
@@ -101,7 +118,7 @@ async def generate_and_send_otp(
 
     Raises:
         ValueError: With "INVALID_IDENTIFIER" or "INVALID_PURPOSE".
-        HTTPException: 501 if SMS delivery is requested but not configured.
+        HTTPException: 501 if SMS delivery fails when ENABLE_SMS_OTP=True.
     """
     if purpose not in VALID_PURPOSES:
         raise ValueError("INVALID_PURPOSE")
@@ -118,19 +135,28 @@ async def generate_and_send_otp(
     key = f"otp:{purpose}:{normalized}"
     await redis.set(key, payload, ex=OTP_TTL)
 
+    # Delivery dispatch
     if id_type == "email":
         send_email_otp(normalized, code, purpose)
     else:
-        try:
-            send_sms_otp(normalized, code, purpose)
-        except NotImplementedError as exc:
-            raise HTTPException(
-                status_code=501,
-                detail={
-                    "code": "SMS_NOT_CONFIGURED",
-                    "message": "SMS OTP is not available. Use email.",
-                },
-            ) from exc
+        # Phone identifier
+        if settings.ENABLE_SMS_OTP:
+            try:
+                send_sms_otp(normalized, code, purpose)
+            except NotImplementedError as exc:
+                raise HTTPException(
+                    status_code=501,
+                    detail={
+                        "code": "SMS_DELIVERY_FAILED",
+                        "message": "SMS OTP delivery failed. Provider not configured.",
+                    },
+                ) from exc
+        else:
+            # Fallback: log warning, show code in dev mode
+            logger.warning(
+                "SMS OTP requested for %s but ENABLE_SMS_OTP=False. "
+                "OTP code (dev only): %s", normalized, code
+            )
 
 
 async def verify_otp(
@@ -176,72 +202,3 @@ async def verify_otp(
     # Success — delete OTP to prevent reuse
     await redis.delete(key)
     return True
-
-
-# ============================================================================
-# OTPService class (backward-compatible SQLAlchemy-based API)
-# ============================================================================
-
-
-class OTPService:
-    """Backward-compatible OTP service using SQLAlchemy storage.
-
-    Existing auth.py endpoints call:
-    - OTPService.create_otp(db, user, purpose)
-    - OTPService.verify_otp(db, user, code)
-    """
-
-    @staticmethod
-    def generate_code() -> str:
-        import random
-
-        return f"{random.randint(100000, 999999)}"
-
-    @staticmethod
-    async def create_otp(
-        db: Any, user: Any, purpose: str = "registration"
-    ) -> str:
-        """Create OTP in database (legacy)."""
-        from datetime import datetime, timedelta, timezone
-
-        from app.models.user import OTPCode
-
-        code = OTPService.generate_code()
-        expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
-        otp = OTPCode(
-            user_id=user.id,
-            code=code,
-            purpose=purpose,
-            expires_at=expires_at,
-        )
-        db.add(otp)
-        await db.flush()
-        return code
-
-    @staticmethod
-    async def verify_otp(db: Any, user: Any, code: str) -> bool:
-        """Verify OTP in database (legacy)."""
-        from datetime import datetime, timezone
-
-        from sqlalchemy import select
-
-        from app.models.user import OTPCode
-
-        now = datetime.now(timezone.utc)
-        stmt = (
-            select(OTPCode)
-            .where(
-                OTPCode.user_id == user.id,
-                OTPCode.code == code,
-                OTPCode.is_used.is_(False),
-                OTPCode.expires_at > now,
-            )
-            .order_by(OTPCode.created_at.desc())
-        )
-        result = await db.execute(stmt)
-        otp = result.scalar_one_or_none()
-        if not otp:
-            return False
-        otp.is_used = True
-        await db.flush()
-        return True

@@ -27,7 +27,7 @@ def _precheck_payload(patent_number: str, jurisdiction: str = "US") -> dict:
 
 async def test_ip_check_creates_claim(client: AsyncClient, make_user, auth_headers, db_session):
     """POST /ip/check → 201, claim created, status='created'."""
-    user = await make_user(role="user", status="active")
+    user = await make_user(role="investor", status="active")
     headers = auth_headers(user)
 
     resp = await client.post(
@@ -42,7 +42,7 @@ async def test_ip_check_creates_claim(client: AsyncClient, make_user, auth_heade
 
 async def test_ip_check_existing_patent(client: AsyncClient, make_user, auth_headers, db_session):
     """POST /ip/check → status='exists' if patent already registered."""
-    user = await make_user(role="user", status="active")
+    user = await make_user(role="investor", status="active")
     headers = auth_headers(user)
 
     # First check → creates claim
@@ -52,7 +52,7 @@ async def test_ip_check_existing_patent(client: AsyncClient, make_user, auth_hea
         json=_precheck_payload("US7654321"),
     )
 
-    # TODO: This endpoint checks Patent model, not Back.
+    # TODO: This endpoint checks Patent model, not IpClaim.
     # Since we don't create Patent records in this flow, it returns "created" again.
     # This test verifies the current behavior.
     resp = await client.post(

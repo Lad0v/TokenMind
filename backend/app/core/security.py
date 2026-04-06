@@ -133,14 +133,29 @@ async def get_current_user(
     token: str = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    """FastAPI dependency: extract current user from JWT token."""
+    """FastAPI dependency: extract current user from JWT token.
+    
+    Supports both user.id (wallet-only) and email (OTP) formats.
+    """
     payload = decode_token(token, expected_type="access")
     subject = payload["sub"]
 
     # Lazy import to avoid circular dependency
     from app.services.user_service import UserService
 
-    user = await UserService.get_by_email(db, subject)
+    # Try to parse as UUID (user.id format for wallet-only users)
+    user = None
+    try:
+        user_id = uuid.UUID(subject)
+        user = await UserService.get_by_id(db, user_id)
+    except (ValueError, AttributeError):
+        # Not a UUID, try as email
+        pass
+    
+    # Fallback to email lookup (OTP users)
+    if not user:
+        user = await UserService.get_by_email(db, subject)
+    
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

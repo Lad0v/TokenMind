@@ -38,7 +38,7 @@ __all__ = [
     "AuditLog", "WebhookEvent",
     "WebhookEventStatus",
     # IP claims domain
-    "Back",
+    "IpClaim",
     "IpDocument",
     "IpReview",
     "IpClaimStatus",

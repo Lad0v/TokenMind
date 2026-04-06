@@ -69,20 +69,3 @@ def send_sms_otp(to_phone: str, code: str, purpose: str) -> None:
     raise NotImplementedError(
         "SMS OTP delivery is not yet configured. Use email identifier for now."
     )
-
-
-async def resend_sms_otp(to_phone: str, via: str = "text") -> None:
-    """Resend OTP via SMS provider (STUB).
-
-    TODO: integrate SMS provider (Firebase Auth / MSG91 / Vonage)
-
-    Args:
-        to_phone: Phone number in E.164 format.
-        via: Delivery channel — "text" or "voice".
-
-    Raises:
-        NotImplementedError: Always, with message about SMS not being configured.
-    """
-    raise NotImplementedError(
-        "SMS OTP delivery is not yet configured. Use email identifier for now."
-    )

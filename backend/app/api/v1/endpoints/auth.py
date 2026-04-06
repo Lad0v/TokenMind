@@ -1,14 +1,14 @@
 """Authentication endpoints.
 
-Provides registration, login, OTP (legacy DB-based + Redis-based),
-token refresh, logout, password reset, and current user retrieval.
-
-OTP architecture:
-- New endpoints (/otp-send, /otp-verify) use Redis-based OTP with HMAC-SHA256
-- Legacy endpoints (/otp/send, /otp/verify) use SQLAlchemy-based OTP in DB
-- Both coexist during migration; legacy will be removed after frontend migration
+Provides:
+- Registration (email + wallet_address, investor role only)
+- Wallet login (POST /auth/login/wallet)
+- OTP (Redis-based, generic)
+- Patent submission OTP flow (email + phone)
+- Logout, password reset, current user
 """
 
+import uuid
 from datetime import timedelta
 
 import redis.asyncio as aioredis
@@ -22,34 +22,35 @@ from app.core.security import (
     decode_and_validate_token,
     get_current_user,
 )
+from app.core.config import settings
 from app.models.user import User, UserRole, UserStatus, VerificationStatus, VerificationCase
 from app.schemas.auth import (
     AuthMeResponse,
     GenericSuccessResponse,
-    LoginRequest,
     LoginResponse,
-    OtpResendRequest,
+    LoginWithTokenResponse,
     OtpSendRequest,
     OtpVerifyRequest,
-    OTPSendRequest,
-    OTPSendResponse,
-    OTPVerifyRequest,
-    OTPVerifyResponse,
     PasswordResetRequest,
     PasswordResetResponse,
+    PatentOtpVerifyRequest,
+    PatentOtpVerifyResponse,
+    PatentSubmissionRequest,
+    PatentSubmissionResponse,
     RegisterRequest,
     RegisterResponse,
+    WalletLoginRequest,
+    WalletLoginResponse,
 )
 from app.services.audit_service import AuditService
-from app.services.otp_service import OTPService, generate_and_send_otp, verify_otp as verify_otp_redis
-from app.services.otp_sender import resend_sms_otp
-from app.services.user_service import UserService
+from app.services.otp_service import generate_and_send_otp, verify_otp as verify_otp_redis
+from app.services.user_service import UserService, validate_wallet_address
 
 router = APIRouter()
 
 
 # ============================================================================
-# Registration
+# Registration (email + wallet, investor only)
 # ============================================================================
 
 @router.post("/register", response_model=RegisterResponse, status_code=201)
@@ -57,65 +58,328 @@ async def register_user(
     payload: RegisterRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    if payload.role not in {UserRole.user, UserRole.issuer, UserRole.investor}:
-        raise HTTPException(status_code=400, detail="Недопустимая роль")
+    """Register investor with email + Solana wallet.
 
-    existing = await UserService.get_by_email(db, payload.email)
-    if existing:
+    - solana_wallet_address is required and becomes the primary (immutable) wallet
+    - role is always 'investor'
+    - user is active immediately
+    - Upgrade to 'issuer' happens only after patent submission + OTP verification
+    """
+    # Validate wallet format
+    if not validate_wallet_address(payload.solana_wallet_address):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid wallet address format. Must be base58 encoded, 32-44 characters.",
+        )
+
+    # Check if user already exists by wallet
+    from app.models.user import WalletLink
+    from sqlalchemy import select
+
+    existing_wallet = await db.execute(
+        select(WalletLink).where(
+            WalletLink.wallet_address == payload.solana_wallet_address.strip(),
+            WalletLink.network == "solana",
+        )
+    )
+    if existing_wallet.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Кошелек уже зарегистрирован")
+
+    existing_email = await UserService.get_by_email(db, payload.email)
+    if existing_email:
         raise HTTPException(status_code=400, detail="Email уже занят")
 
-    if payload.role == UserRole.investor:
-        if not payload.wallet_address:
-            raise HTTPException(status_code=400, detail="Для инвестора требуется wallet_address")
-        if not payload.password:
-            raise HTTPException(status_code=400, detail="Для инвестора требуется пароль")
-
-        user = await UserService.create_investor_user(
-            db,
-            email=payload.email,
-            wallet_address=payload.wallet_address,
-        )
-        await UserService.set_password(db, user, payload.password)
-
-        await AuditService.write(
-            db,
-            action="auth.register_investor",
-            entity_type="user",
-            entity_id=str(user.id),
-            actor_id=user.id,
-        )
-        return RegisterResponse(message="Investor registered successfully", user_id=str(user.id))
-
-    # Patient / issuer: OTP registration flow
-    user = await UserService.create_auth_user(
+    user, _ = await UserService.create_auth_user(
         db,
         email=payload.email,
-        password=payload.password,
+        wallet_address=payload.solana_wallet_address,
         role=payload.role,
         legal_name=payload.legal_name,
         country=payload.country,
     )
 
-    otp_code = await OTPService.create_otp(db, user, purpose="registration")
-    # TODO: Replace with real delivery (email/SMS)
-    print(f"[DEV] OTP for {user.email}: {otp_code}")
-
     await AuditService.write(
         db,
-        action="auth.register_patient",
+        action="auth.register_investor",
         entity_type="user",
         entity_id=str(user.id),
         actor_id=user.id,
     )
 
     return RegisterResponse(
-        message="OTP sent. Verify to complete registration.",
-        user_id=str(user.id),
+        message="Investor registered successfully. Login with wallet to get tokens.",
     )
 
 
 # ============================================================================
-# Redis-based OTP endpoints (new architecture)
+# Wallet Login (the ONLY way to login)
+# ============================================================================
+
+@router.post("/login/wallet", response_model=WalletLoginResponse)
+async def login_wallet(
+    body: WalletLoginRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Login or register via Solana wallet address.
+
+    If wallet exists → login (return tokens).
+    If wallet is new → error (must register first via /register).
+    """
+    # Validate wallet address format
+    if not validate_wallet_address(body.wallet_address):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid wallet address format. Must be base58 encoded, 32-44 characters.",
+        )
+
+    # Find user by wallet
+    from app.models.user import WalletLink
+    from sqlalchemy import select
+
+    result = await db.execute(
+        select(WalletLink).where(
+            WalletLink.wallet_address == body.wallet_address.strip(),
+            WalletLink.network == body.network.lower(),
+        )
+    )
+    wallet_link = result.scalar_one_or_none()
+
+    if not wallet_link:
+        raise HTTPException(
+            status_code=404,
+            detail="Wallet not found. Please register first via POST /api/v1/auth/register",
+        )
+
+    user = await UserService.get_by_id(db, wallet_link.user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if user.status in {UserStatus.suspended.value, UserStatus.blocked.value}:
+        raise HTTPException(status_code=403, detail="Account unavailable")
+
+    # Create JWT tokens (sub = user.id)
+    access_token = create_access_token(
+        subject=str(user.id),
+        expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
+    )
+    refresh_token = create_refresh_token(
+        subject=str(user.id),
+        expires_delta=timedelta(minutes=settings.REFRESH_TOKEN_EXPIRE_MINUTES),
+    )
+
+    await AuditService.write(
+        db,
+        action="auth.wallet_login",
+        entity_type="user",
+        entity_id=str(user.id),
+        actor_id=user.id,
+    )
+
+    return WalletLoginResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        role=user.role.value if isinstance(user.role, UserRole) else user.role,
+        is_new_user=False,
+    )
+
+
+# ============================================================================
+# Patent Submission OTP Flow
+# ============================================================================
+
+@router.post("/submit-patent", response_model=PatentSubmissionResponse)
+async def submit_patent(
+    payload: PatentSubmissionRequest,
+    db: AsyncSession = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis),
+    current_user: User = Depends(get_current_user),
+):
+    """Initial patent submission — requires email + phone for OTP.
+
+    This endpoint:
+    1. Validates the current user is an investor
+    2. Stores patent submission data (pending OTP verification)
+    3. Sends OTP to email AND phone
+    4. Returns message telling frontend where OTP was sent
+    5. Returns submission_id for later OTP verification
+
+    After OTP verification, user role is upgraded from investor → issuer.
+    """
+    from app.models.user import WalletLink
+    from app.models.ip_claim import IpClaim
+    from sqlalchemy import select
+
+    # Verify user is investor
+    user_role = current_user.role.value if isinstance(current_user.role, UserRole) else current_user.role
+    if user_role != UserRole.investor.value:
+        raise HTTPException(
+            status_code=400,
+            detail="Only investors can submit patents",
+        )
+
+    # Check if user already has a primary wallet
+    wallet_result = await db.execute(
+        select(WalletLink).where(
+            WalletLink.user_id == current_user.id,
+            WalletLink.is_primary == True,
+        )
+    )
+    primary_wallet = wallet_result.scalar_one_or_none()
+    if not primary_wallet:
+        raise HTTPException(status_code=400, detail="Primary wallet required")
+
+    # Create IpClaim in 'pending_otp' status
+    claim = IpClaim(
+        issuer_user_id=current_user.id,
+        patent_number=payload.patent_number,
+        patent_title=payload.patent_title,
+        claimed_owner_name=payload.claimed_owner_name,
+        description=payload.description,
+        jurisdiction=payload.jurisdiction,
+        status="submitted",
+        prechecked=False,
+        patent_metadata={
+            "submission_email": payload.email,
+            "submission_phone": payload.phone,
+            "wallet_address": primary_wallet.wallet_address,
+        },
+    )
+    db.add(claim)
+    await db.flush()
+
+    # Send OTP to email
+    try:
+        await generate_and_send_otp(redis, payload.email, "patent_submission")
+    except (HTTPException, RuntimeError) as exc:
+        import logging
+        logging.getLogger(__name__).warning(
+            "OTP email delivery failed for %s: %s", payload.email, str(exc)
+        )
+
+    # Send OTP to phone (if SMS enabled)
+    import app.services.otp_service as otp_module
+    if otp_module.settings.ENABLE_SMS_OTP:
+        try:
+            from app.services.otp_sender import send_sms_otp
+            import secrets
+            code = f"{secrets.randbelow(900000) + 100000:06d}"
+            await send_sms_otp(payload.phone, code)
+            # Also store phone OTP in Redis
+            await generate_and_send_otp(redis, payload.phone, "patent_submission_phone")
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning(
+                "OTP SMS delivery failed for %s: %s", payload.phone, str(exc)
+            )
+
+    # Mask the email for response
+    masked_email = payload.email[0] + "***@" + payload.email.split("@")[1]
+
+    await AuditService.write(
+        db,
+        action="patent.submission_otp_sent",
+        entity_type="ip_claim",
+        entity_id=str(claim.id),
+        actor_id=current_user.id,
+        payload={"email": payload.email, "phone": payload.phone},
+    )
+
+    return PatentSubmissionResponse(
+        message="OTP sent. Please verify to complete patent submission and upgrade to issuer role.",
+        otp_sent_to=masked_email,
+        otp_purpose="patent_submission",
+        submission_id=str(claim.id),
+    )
+
+
+@router.post("/submit-patent/verify-otp", response_model=PatentOtpVerifyResponse)
+async def verify_patent_submission_otp(
+    payload: PatentOtpVerifyRequest,
+    db: AsyncSession = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis),
+    current_user: User = Depends(get_current_user),
+):
+    """Verify OTP for patent submission.
+
+    After successful verification:
+    1. User role is upgraded from investor → issuer
+    2. IpClaim status is updated to 'prechecked'
+    3. JWT tokens are returned
+    """
+    from app.models.ip_claim import IpClaim
+    from sqlalchemy import select
+
+    # Verify OTP
+    try:
+        await verify_otp_redis(redis, payload.email, payload.code, "patent_submission")
+    except ValueError as exc:
+        error_msg = str(exc)
+        status_map = {
+            "OTP_EXPIRED": 404,
+            "OTP_NOT_FOUND": 404,
+            "OTP_BLOCKED": 409,
+            "OTP_INVALID": 422,
+        }
+        raise HTTPException(
+            status_code=status_map.get(error_msg, 400),
+            detail={"code": error_msg},
+        )
+
+    # Find the IpClaim
+    claim_id = uuid.UUID(payload.submission_id)
+    stmt = select(IpClaim).where(IpClaim.id == claim_id)
+    result = await db.execute(stmt)
+    claim = result.scalar_one_or_none()
+
+    if not claim:
+        raise HTTPException(status_code=404, detail="Patent submission not found")
+
+    if claim.issuer_user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not your submission")
+
+    # Upgrade user role: investor → issuer
+    old_role = current_user.role.value if isinstance(current_user.role, UserRole) else current_user.role
+    current_user.role = UserRole.issuer.value
+    await db.flush()
+
+    # Update claim status
+    claim.status = "prechecked"
+    await db.flush()
+
+    # Create tokens
+    access_token = create_access_token(
+        subject=str(current_user.id),
+        expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
+    )
+    refresh_token = create_refresh_token(
+        subject=str(current_user.id),
+        expires_delta=timedelta(minutes=settings.REFRESH_TOKEN_EXPIRE_MINUTES),
+    )
+
+    await AuditService.write(
+        db,
+        action="user_role_upgraded_to_issuer",
+        entity_type="user",
+        entity_id=str(current_user.id),
+        actor_id=current_user.id,
+        payload={
+            "old_role": old_role,
+            "new_role": UserRole.issuer.value,
+            "claim_id": str(claim.id),
+        },
+    )
+
+    return PatentOtpVerifyResponse(
+        verified=True,
+        role_upgraded=True,
+        new_role=UserRole.issuer.value,
+        access_token=access_token,
+        refresh_token=refresh_token,
+    )
+
+
+# ============================================================================
+# Generic OTP endpoints (Redis-based)
 # ============================================================================
 
 @router.post("/otp-send")
@@ -137,8 +401,12 @@ async def otp_send(
 async def otp_verify(
     payload: OtpVerifyRequest,
     redis: aioredis.Redis = Depends(get_redis),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Verify OTP and return short-lived verified_token (JWT, 10 min)."""
+    """Verify OTP and return short-lived verified_token (JWT, 10 min).
+
+    For purpose='issuer_upgrade', also changes user role from investor to issuer.
+    """
     try:
         await verify_otp_redis(redis, payload.identifier, payload.code, payload.purpose)
     except ValueError as exc:
@@ -154,179 +422,79 @@ async def otp_verify(
             detail={"code": error_msg},
         )
 
+    # Check if this is an issuer upgrade
+    is_issuer_upgrade = payload.purpose == "issuer_upgrade"
+    role_changed = False
+
+    if is_issuer_upgrade:
+        user = await UserService.get_by_email(db, payload.identifier)
+        if user and user.role == UserRole.investor.value:
+            old_role = user.role
+            user.role = UserRole.issuer.value
+            await db.flush()
+            role_changed = True
+
+            await AuditService.write(
+                db,
+                action="user_role_upgraded_to_issuer",
+                entity_type="user",
+                entity_id=str(user.id),
+                actor_id=user.id,
+                payload={"old_role": old_role, "new_role": UserRole.issuer.value},
+            )
+
     verified_token = create_access_token(
-        subject=payload.identifier,
+        subject=payload.identifier if not is_issuer_upgrade else str(user.id),
         expires_delta=timedelta(minutes=10),
     )
-    return {"verified": True, "verified_token": verified_token}
 
+    response = {"verified": True, "verified_token": verified_token}
+    if role_changed:
+        response["role_changed"] = True
+        response["new_role"] = "issuer"
 
-@router.post("/otp-resend", response_model=GenericSuccessResponse)
-async def otp_resend(
-    body: OtpResendRequest,
-    db: AsyncSession = Depends(get_db),
-    redis: aioredis.Redis = Depends(get_redis),
-):
-    """Resend OTP via SMS with rate limiting (max 3 per identifier per 10 minutes)."""
-    rate_key = f"otp_resend_rate:{body.identifier}"
-    resend_count = await redis.get(rate_key)
-    if resend_count and int(resend_count) >= 3:
-        raise HTTPException(
-            status_code=429,
-            detail={
-                "code": "RESEND_RATE_LIMITED",
-                "message": "Too many resend attempts. Try again later.",
-            },
-        )
-
-    key = f"otp:{body.purpose}:{body.identifier}"
-    if not await redis.exists(key):
-        raise HTTPException(
-            status_code=404,
-            detail={"code": "OTP_NOT_FOUND", "message": "No active OTP for this identifier."},
-        )
-
-    await resend_sms_otp(body.identifier, via=body.via)
-
-    pipe = redis.pipeline()
-    pipe.incr(rate_key)
-    pipe.expire(rate_key, 600)
-    await pipe.execute()
-
-    return GenericSuccessResponse(message="OTP resent successfully")
+    return response
 
 
 # ============================================================================
-# Legacy SQLAlchemy-based OTP endpoints (to be removed after migration)
+# Token Management / Logout / Password Reset / Me
 # ============================================================================
 
-@router.post("/otp/send", response_model=OTPSendResponse, deprecated=True)
-async def send_otp_legacy(
-    payload: dict,
-    db: AsyncSession = Depends(get_db),
-):
-    """[LEGACY] Send OTP via DB storage. Use /otp-send instead.
-    
-    Accepts: {"email": "..."} or {"identifier": "...", "purpose": "..."}
-    """
-    # Support both old {"email": ...} and new {"identifier": ..., "purpose": ...} formats
-    email = payload.get("email") or payload.get("identifier")
-    if not email:
-        raise HTTPException(status_code=400, detail="email or identifier required")
-
-    user = await UserService.get_by_email(db, email)
-    if not user:
-        raise HTTPException(status_code=404, detail="Пользователь не найден")
-
-    if user.status == UserStatus.active.value:
-        raise HTTPException(status_code=400, detail="Пользователь уже активирован")
-
-    purpose = payload.get("purpose", "registration")
-    otp_code = await OTPService.create_otp(db, user, purpose=purpose)
-    # TODO: Replace with real delivery
-    print(f"[DEV][LEGACY] OTP for {user.email}: {otp_code}")
-
-    return OTPSendResponse(message="OTP code sent")
-
-
-@router.post("/otp/verify", response_model=OTPVerifyResponse, deprecated=True)
-async def verify_otp_legacy(
-    payload: OTPVerifyRequest,
-    db: AsyncSession = Depends(get_db),
-):
-    """[LEGACY] Verify OTP from DB storage. Use /otp-verify instead."""
-    user = await UserService.get_by_email(db, payload.email)
-    if not user:
-        raise HTTPException(status_code=404, detail="Пользователь не найден")
-
-    is_valid = await OTPService.verify_otp(db, user, payload.code)
-    if not is_valid:
-        raise HTTPException(status_code=400, detail="Неверный или просроченный OTP код")
-
-    await UserService.activate_after_otp(db, user)
-
-    if user.role in {UserRole.user, UserRole.issuer}:
-        vc = VerificationCase(
-            user_id=user.id,
-            status=VerificationStatus.not_started,
-        )
-        db.add(vc)
-        await db.flush()
-
-    access_token = create_access_token(subject=user.email)
-    refresh_token = create_refresh_token(subject=user.email)
-
-    return OTPVerifyResponse(
-        verified=True,
-        message="OTP verified. Access granted.",
-        access_token=access_token,
-        refresh_token=refresh_token,
-    )
-
-
-# ============================================================================
-# Login / Logout / Token Management
-# ============================================================================
-
-@router.post("/login", response_model=LoginResponse)
-async def login_for_access_token(
-    payload: LoginRequest,
-    db: AsyncSession = Depends(get_db),
-):
-    user = await UserService.get_by_email(db, payload.email)
-    if not user:
-        raise HTTPException(status_code=404, detail="Пользователь не найден")
-
-    if not user.password_hash or not UserService.verify_password(payload.password, user.password_hash):
-        await AuditService.write(
-            db,
-            action="auth.login_failed",
-            entity_type="user",
-            payload={"email": payload.email},
-        )
-        raise HTTPException(status_code=401, detail="Неверный email или пароль")
-
-    if user.status in {UserStatus.suspended.value, UserStatus.blocked.value}:
-        raise HTTPException(status_code=403, detail="Пользователь недоступен")
-
-    if user.status == UserStatus.pending_otp.value:
-        raise HTTPException(status_code=403, detail="Требуется завершение OTP верификации")
-
-    await AuditService.write(
-        db,
-        action="auth.login_success",
-        entity_type="user",
-        entity_id=str(user.id),
-        actor_id=user.id,
-    )
-
-    return LoginResponse(
-        role=user.role,
-        access_token=create_access_token(subject=user.email),
-        refresh_token=create_refresh_token(subject=user.email),
-    )
-
-
-@router.post("/refresh", response_model=LoginResponse)
+@router.post("/refresh", response_model=LoginWithTokenResponse)
 async def refresh_access_token(
     payload: dict,
     db: AsyncSession = Depends(get_db),
 ):
+    """Refresh access token and return new tokens.
+
+    Supports both user.id (UUID) and email formats in refresh token sub.
+    """
     refresh_token = payload.get("refresh_token")
     if not refresh_token:
         raise HTTPException(status_code=400, detail="refresh_token required")
 
     token_payload = await decode_and_validate_token(db, refresh_token, expected_type="refresh")
-    user = await UserService.get_by_email(db, token_payload["sub"])
+
+    # sub is user.id (UUID) or email (legacy)
+    user_id = token_payload.get("sub")
+    user = None
+
+    # Try UUID first
+    try:
+        user = await UserService.get_by_id(db, uuid.UUID(user_id))
+    except (ValueError, AttributeError):
+        # Fallback to email
+        user = await UserService.get_by_email(db, user_id)
+
     if not user:
         raise HTTPException(status_code=401, detail="Не удалось проверить учетные данные")
 
     if user.status in {UserStatus.suspended.value, UserStatus.blocked.value}:
         raise HTTPException(status_code=403, detail="Пользователь недоступен")
 
-    return LoginResponse(
+    return LoginWithTokenResponse(
         role=user.role,
-        access_token=create_access_token(subject=user.email),
+        access_token=create_access_token(subject=str(user.id)),
         refresh_token=refresh_token,
     )
 
@@ -388,7 +556,7 @@ async def read_current_user(
     name = profile.full_name if profile else None
 
     verification_status = None
-    if current_user.role in {UserRole.user, UserRole.issuer}:
+    if current_user.role in {UserRole.investor.value, UserRole.issuer.value}:
         from app.models.user import VerificationCase
         from sqlalchemy import select
 
@@ -404,7 +572,7 @@ async def read_current_user(
 
     return AuthMeResponse(
         id=str(current_user.id),
-        email=current_user.email,
+        email=current_user.email,  # May be None for wallet-only users
         name=name,
         role=current_user.role,
         status=current_user.status,

@@ -15,6 +15,7 @@ from app.core.database import Base
 if TYPE_CHECKING:
     from app.models.ip_claim import IpClaim, IpReview
     from app.models.patent import Patent
+    from app.models.user import Profile, KYCCase, SanctionCheck, WalletLink, OTPCode, VerificationCase
 
 
 def _utcnow() -> datetime:
@@ -26,10 +27,8 @@ def _utcnow() -> datetime:
 # ---------------------------------------------------------------------------
 
 class UserRole(str, enum.Enum):
-    user = "user"
-    issuer = "issuer"
     investor = "investor"
-    compliance_officer = "compliance_officer"
+    issuer = "issuer"
     admin = "admin"
 
 
@@ -85,13 +84,13 @@ class User(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    email: Mapped[Optional[str]] = mapped_column(String(255), unique=True, nullable=True, index=True)
     password_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     auth_provider_ref: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     role: Mapped[str] = mapped_column(
         SAEnum(*[r.value for r in UserRole], name="user_role"),
         nullable=False,
-        default=UserRole.user,
+        default=UserRole.investor,
     )
     status: Mapped[str] = mapped_column(
         SAEnum(*[s.value for s in UserStatus], name="user_status"),
@@ -117,9 +116,9 @@ class User(Base):
         foreign_keys="[Patent.owner_user_id]",
         back_populates="owner",
     )
-    ip_claims: Mapped[List["Back"]] = relationship(
-        "Back",
-        foreign_keys="[Back.issuer_user_id]",
+    ip_claims: Mapped[List["IpClaim"]] = relationship(
+        "IpClaim",
+        foreign_keys="[IpClaim.issuer_user_id]",
         back_populates="issuer",
     )
     ip_claim_reviews: Mapped[List["IpReview"]] = relationship(
@@ -289,6 +288,7 @@ class VerificationCase(Base):
     user_address: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     id_document_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     selfie_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    video_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     # Review data
     status: Mapped[str] = mapped_column(
         SAEnum(*[s.value for s in VerificationStatus], name="verification_status"),

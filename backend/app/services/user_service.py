@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -9,11 +10,25 @@ from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from app.models.user import Profile, User, UserStatus, UserRole
+from app.models.user import Profile, User, UserStatus, UserRole, WalletLink
 from app.schemas.user import ProfileUpdate
 
 _ITERATIONS = 260_000
 _HASH_ALG = "sha256"
+
+# Base58 alphabet (no 0, O, I, l)
+_BASE58_PATTERN = re.compile(r'^[1-9A-HJ-NP-Za-km-z]+$')
+
+
+def validate_wallet_address(wallet_address: str) -> bool:
+    """Validate Solana wallet address format (base58, 32-44 chars)."""
+    if not wallet_address:
+        return False
+    if len(wallet_address) < 32 or len(wallet_address) > 44:
+        return False
+    if not _BASE58_PATTERN.match(wallet_address):
+        return False
+    return True
 
 
 class UserService:
@@ -70,29 +85,72 @@ class UserService:
         cls,
         db: AsyncSession,
         email: str,
-        password: str,
+        wallet_address: str,
         role: str,
         legal_name: str | None,
         country: str | None,
-    ) -> User:
+    ) -> tuple[User, bool]:
+        """Create user with email + wallet_address.
+
+        All users are created as investors with status=active.
+        Wallet is created as primary (immutable).
+
+        Returns tuple of (user, is_new).
+        """
+        from app.models.user import UserStatus
+
+        # Check if user already exists by wallet
+        existing_wallet = await db.execute(
+            select(WalletLink).where(
+                WalletLink.wallet_address == wallet_address.strip(),
+                WalletLink.network == "solana",
+            )
+        )
+        existing_link = existing_wallet.scalar_one_or_none()
+
+        if existing_link:
+            # User exists — return existing
+            user = await cls.get_by_id(db, existing_link.user_id)
+            return user, False
+
+        # Check if user exists by email
+        existing_user = await cls.get_by_email(db, email)
+        if existing_user:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail="Email уже занят")
+
+        # Create new user (investor, active)
+        status = UserStatus.active.value
+
         user = User(
             email=email.lower().strip(),
-            password_hash=cls.hash_password(password),
+            password_hash=None,  # No password — wallet auth only
             role=role,
-            status="pending_otp",
+            status=status,
         )
         db.add(user)
         await db.flush()
 
-        profile = Profile(
+        if legal_name or country:
+            profile = Profile(
+                user_id=user.id,
+                full_name=legal_name,
+                country=country,
+            )
+            db.add(profile)
+
+        # Create primary wallet link
+        wallet = WalletLink(
             user_id=user.id,
-            full_name=legal_name,
-            country=country,
+            wallet_address=wallet_address.strip(),
+            network="solana",
+            is_primary=True,
         )
-        db.add(profile)
+        db.add(wallet)
+
         await db.flush()
         await db.refresh(user)
-        return user
+        return user, True
 
     @classmethod
     async def create_investor_user(
@@ -199,6 +257,7 @@ class UserService:
         id_document_url: str,
         selfie_url: str,
         user_address: str,
+        video_url: str | None = None,
     ) -> "VerificationCase":
         """Create a new verification case with pending status."""
         from app.models.user import VerificationCase, VerificationStatus
@@ -208,6 +267,7 @@ class UserService:
             id_document_url=id_document_url,
             selfie_url=selfie_url,
             user_address=user_address,
+            video_url=video_url,
             status=VerificationStatus.pending.value,
         )
         db.add(vc)
@@ -486,3 +546,160 @@ class UserService:
         )
 
         return user
+
+    # =========================================================================
+    # Wallet Link Management
+    # =========================================================================
+
+    @staticmethod
+    async def create_wallet_link(
+        db: AsyncSession,
+        user_id: uuid.UUID,
+        wallet_address: str,
+        network: str = "solana",
+        is_primary: bool = False,
+    ) -> WalletLink:
+        """Add a wallet address to user's account.
+
+        Blocks setting is_primary=True if user already has a primary wallet.
+        """
+        from fastapi import HTTPException
+
+        # Check if user already has a primary wallet for this network
+        if is_primary:
+            existing_primaries = await db.execute(
+                select(WalletLink).where(
+                    WalletLink.user_id == user_id,
+                    WalletLink.network == network.lower(),
+                    WalletLink.is_primary == True,
+                )
+            )
+            if existing_primaries.scalars().first():
+                raise HTTPException(
+                    status_code=400,
+                    detail="User already has a primary wallet for this network",
+                )
+
+        wallet = WalletLink(
+            user_id=user_id,
+            wallet_address=wallet_address.strip(),
+            network=network.lower(),
+            is_primary=is_primary,
+        )
+        db.add(wallet)
+        await db.flush()
+        await db.refresh(wallet)
+        return wallet
+
+    @staticmethod
+    async def get_user_wallets(db: AsyncSession, user_id: uuid.UUID) -> list[WalletLink]:
+        """Get all wallet addresses for a user."""
+        result = await db.execute(
+            select(WalletLink)
+            .where(WalletLink.user_id == user_id)
+            .order_by(WalletLink.is_primary.desc(), WalletLink.created_at)
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def get_primary_wallet(
+        db: AsyncSession, 
+        user_id: uuid.UUID,
+        network: str = "solana",
+    ) -> Optional[WalletLink]:
+        """Get primary wallet for a specific network."""
+        result = await db.execute(
+            select(WalletLink).where(
+                WalletLink.user_id == user_id,
+                WalletLink.network == network,
+                WalletLink.is_primary == True,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def delete_wallet(
+        db: AsyncSession,
+        user_id: uuid.UUID,
+        wallet_id: uuid.UUID,
+    ) -> bool:
+        """Remove a wallet link. Raises 403 if wallet is primary."""
+        from fastapi import HTTPException
+
+        result = await db.execute(
+            select(WalletLink).where(
+                WalletLink.id == wallet_id,
+                WalletLink.user_id == user_id,
+            )
+        )
+        wallet = result.scalar_one_or_none()
+        if not wallet:
+            return False
+
+        # IM MUTABILITY GUARD: Primary wallet cannot be removed
+        if wallet.is_primary:
+            raise HTTPException(
+                status_code=403,
+                detail="Primary wallet cannot be removed",
+            )
+
+        await db.delete(wallet)
+        return True
+
+    # =========================================================================
+    # Wallet-only registration
+    # =========================================================================
+
+    @staticmethod
+    async def register_or_login_by_wallet(
+        db: AsyncSession,
+        wallet_address: str,
+        network: str = "solana",
+    ) -> tuple[User, bool]:  # (user, is_new)
+        """Register new investor by wallet or return existing user.
+
+        Returns tuple of (user, is_new_user).
+        """
+        from fastapi import HTTPException
+
+        # Normalize wallet address
+        wallet_address = wallet_address.strip()
+
+        # 1. Look up existing WalletLink
+        existing = await db.execute(
+            select(WalletLink).where(
+                WalletLink.wallet_address == wallet_address,
+                WalletLink.network == network.lower(),
+            )
+        )
+        wallet_link = existing.scalar_one_or_none()
+
+        if wallet_link:
+            # Wallet exists — return existing user (login flow)
+            user = await db.get(User, wallet_link.user_id)
+            if not user:
+                raise HTTPException(status_code=404, detail="User not found for wallet")
+            return user, False
+
+        # 2. Create new user (investor, active, no email/password)
+        user = User(
+            role=UserRole.investor.value,
+            status=UserStatus.active.value,
+            email=None,
+            password_hash=None,
+        )
+        db.add(user)
+        await db.flush()
+
+        # 3. Create wallet link (primary, immutable)
+        link = WalletLink(
+            user_id=user.id,
+            wallet_address=wallet_address,
+            network=network.lower(),
+            is_primary=True,
+        )
+        db.add(link)
+        await db.commit()
+        await db.refresh(user)
+
+        return user, True

@@ -1,56 +1,54 @@
-.PHONY: help dev prod build up down restart logs clean
+.PHONY: help dev prod build build-dev up down restart logs logs-api ps clean migrate status
 
-# ======================================================================
-# TokenMind Makefile
-# ======================================================================
+COMPOSE_DEV=docker compose -f docker-compose.yml -f docker-compose.override.yml
+COMPOSE_PROD=docker compose -f docker-compose.yml
 
-help: ## Show this help
-	@echo "TokenMind - IP Tokenization Platform"
+help:
+	@echo "TokenMind Docker commands"
 	@echo ""
-	@echo "Available commands:"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
+	@echo "  make dev       Start full stack with hot reload"
+	@echo "  make prod      Start full stack without dev override"
+	@echo "  make build     Build production images"
+	@echo "  make build-dev Build development images"
+	@echo "  make down      Stop the stack"
+	@echo "  make logs-api  Follow API logs"
 
-dev: ## Start development environment
-	TARGET=development docker-compose up -d
+dev:
+	$(COMPOSE_DEV) up -d --build
 
-prod: ## Start production environment
-	TARGET=production docker-compose up -d
+prod:
+	$(COMPOSE_PROD) up -d --build
 
-build: ## Build all services
-	docker-compose build
+build:
+	$(COMPOSE_PROD) build
 
-build-dev: ## Build for development
-	TARGET=development docker-compose build
+build-dev:
+	$(COMPOSE_DEV) build
 
-up: ## Start all services
-	docker-compose up -d
+up:
+	$(COMPOSE_PROD) up -d
 
-down: ## Stop all services
-	docker-compose down
+down:
+	$(COMPOSE_DEV) down
 
-restart: ## Restart all services
-	docker-compose restart
+restart:
+	$(COMPOSE_DEV) restart
 
-logs: ## View logs
-	docker-compose logs -f
+logs:
+	$(COMPOSE_DEV) logs -f
 
-logs-api: ## View API logs
-	docker-compose logs -f api
+logs-api:
+	$(COMPOSE_DEV) logs -f api
 
-logs-frontend: ## View Frontend logs
-	docker-compose logs -f frontend
+ps:
+	$(COMPOSE_DEV) ps
 
-ps: ## Show service status
-	docker-compose ps
+clean:
+	$(COMPOSE_DEV) down -v --rmi local
 
-clean: ## Remove all containers and volumes
-	docker-compose down -v --rmi local
+migrate:
+	$(COMPOSE_PROD) run --rm migrate
 
-migrate: ## Run database migrations
-	docker-compose run --rm alembic alembic upgrade head
-
-status: ## Check service health
-	@echo "Checking service health..."
-	@curl -s http://localhost:3000 > /dev/null && echo "✅ Frontend: OK" || echo "❌ Frontend: DOWN"
-	@curl -s http://localhost:8000/health > /dev/null && echo "✅ API: OK" || echo "❌ API: DOWN"
-	@curl -s http://localhost:9000/minio/health/live > /dev/null && echo "✅ MinIO: OK" || echo "❌ MinIO: DOWN"
+status:
+	@curl -sf http://localhost:8000/health > /dev/null && echo "API: OK" || echo "API: DOWN"
+	@curl -sf http://localhost:9000/minio/health/live > /dev/null && echo "MinIO: OK" || echo "MinIO: DOWN"

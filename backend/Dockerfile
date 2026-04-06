@@ -5,13 +5,11 @@ FROM python:3.12-slim AS builder
 
 WORKDIR /app
 
-# System dependencies for building
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for better layer caching
 COPY requirements.txt .
 RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
@@ -22,26 +20,26 @@ FROM python:3.12-slim AS production
 
 WORKDIR /app
 
-# Install curl for healthchecks and PostgreSQL client libraries
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
     libpq5 \
     && rm -rf /var/lib/apt/lists/* \
-    && groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser \
-    && mkdir -p /app/uploads && chown -R appuser:appuser /app
+    && groupadd -r appuser \
+    && useradd -r -g appuser -d /app -s /usr/sbin/nologin appuser \
+    && mkdir -p /app/uploads \
+    && chown -R appuser:appuser /app
 
-# Copy installed dependencies from builder
 COPY --from=builder /install /usr/local
-
-# Copy application code
 COPY --chown=appuser:appuser . .
+RUN chmod +x /app/scripts/entrypoint.sh
 
-# Switch to non-root user
 USER appuser
 
 EXPOSE 8000
 
-# Production command
+ENTRYPOINT ["/app/scripts/entrypoint.sh"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
 
 # ======================================================================
@@ -51,20 +49,19 @@ FROM python:3.12-slim AS development
 
 WORKDIR /app
 
-# Install system dependencies including PostgreSQL dev headers
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy and install requirements
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
 COPY . .
 
 EXPOSE 8000
 
-# Development command with reload
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

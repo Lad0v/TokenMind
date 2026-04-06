@@ -1,16 +1,16 @@
 # Python
-__pycache__
+__pycache__/
 *.py[cod]
 *$py.class
 *.so
 *.egg
 *.egg-info
-dist
-build
+dist/
+build/
 
 # Virtual environments
 .env
-.venv
+.venv/
 env/
 venv/
 
@@ -24,9 +24,10 @@ venv/
 .git/
 .gitignore
 
-# Docker
+# Docker metadata
 Dockerfile
 docker-compose.yml
+docker-compose.override.yml
 .dockerignore
 
 # Testing
@@ -35,17 +36,21 @@ docker-compose.yml
 htmlcov/
 .tox/
 
+# Local runtime artifacts
+uploads/
+
 # Documentation
 *.md
 !requirements.txt
 
-# Scripts
+# Utility scripts not needed in image
 test_*.sh
 test_*.ps1
-
-# Qwen
-.qwen/
+seed_*.py
 
 # OS
 .DS_Store
 Thumbs.db
+
+# Local tool state
+.qwen/

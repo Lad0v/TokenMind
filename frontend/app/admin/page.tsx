@@ -1,3 +1,5 @@
+"use client"
+
 import {
   UserCheck,
   FileCheck2,
@@ -11,6 +13,36 @@ import {
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import {Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis} from "recharts";
+
+
+const registrationData = [
+  { month: "Jan", users: 45 },
+  { month: "Feb", users: 52 },
+  { month: "Mar", users: 78 },
+  { month: "Apr", users: 110 },
+  { month: "May", users: 156 },
+  { month: "Jun", users: 203 },
+]
+
+const kycData = [
+  { month: "Jan", approved: 32, rejected: 8, pending: 5 },
+  { month: "Feb", approved: 41, rejected: 6, pending: 5 },
+  { month: "Mar", approved: 58, rejected: 12, pending: 8 },
+  { month: "Apr", approved: 89, rejected: 15, pending: 6 },
+  { month: "May", approved: 124, rejected: 22, pending: 10 },
+  { month: "Jun", approved: 168, rejected: 25, pending: 10 },
+]
+
+const claimsData = [
+  { month: "Jan", patents: 12, trademarks: 18, copyrights: 8 },
+  { month: "Feb", patents: 15, trademarks: 22, copyrights: 12 },
+  { month: "Mar", patents: 21, trademarks: 28, copyrights: 18 },
+  { month: "Apr", patents: 28, trademarks: 35, copyrights: 24 },
+  { month: "May", patents: 35, trademarks: 42, copyrights: 31 },
+  { month: "Jun", patents: 45, trademarks: 52, copyrights: 38 },
+]
+
 
 const stats = [
   {
@@ -247,6 +279,181 @@ export default function AdminDashboard() {
                   {getPriorityBadge(item.priority)}
                 </div>
               ))}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Graphics ------------------------------------------- */}
+
+        <Card className="bg-card">
+          <CardHeader>
+            <CardTitle>User Registrations</CardTitle>
+            <CardDescription>Monthly new user sign-ups</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="h-[300px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={registrationData}>
+                  <defs>
+                    <linearGradient id="colorUsers" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="hsl(155, 70%, 45%)" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="hsl(155, 70%, 45%)" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(155, 10%, 25%)" />
+                  <XAxis
+                      dataKey="month"
+                      stroke="hsl(155, 10%, 50%)"
+                      fontSize={12}
+                  />
+                  <YAxis stroke="hsl(155, 10%, 50%)" fontSize={12} />
+                  <Tooltip
+                      contentStyle={{
+                        backgroundColor: "hsl(160, 10%, 14%)",
+                        border: "1px solid hsl(155, 15%, 28%)",
+                        borderRadius: "8px",
+                      }}
+                  />
+                  <Area
+                      type="monotone"
+                      dataKey="users"
+                      stroke="hsl(155, 70%, 45%)"
+                      fillOpacity={1}
+                      fill="url(#colorUsers)"
+                      strokeWidth={2}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* KYC Status Chart */}
+        <Card className="bg-card">
+          <CardHeader>
+            <CardTitle>KYC Verifications</CardTitle>
+            <CardDescription>Monthly verification outcomes</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="h-[300px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={kycData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(155, 10%, 25%)" />
+                  <XAxis
+                      dataKey="month"
+                      stroke="hsl(155, 10%, 50%)"
+                      fontSize={12}
+                  />
+                  <YAxis stroke="hsl(155, 10%, 50%)" fontSize={12} />
+                  <Tooltip
+                      contentStyle={{
+                        backgroundColor: "hsl(160, 10%, 14%)",
+                        border: "1px solid hsl(155, 15%, 28%)",
+                        borderRadius: "8px",
+                      }}
+                  />
+                  <Bar
+                      dataKey="approved"
+                      fill="hsl(155, 70%, 45%)"
+                      radius={[4, 4, 0, 0]}
+                  />
+                  <Bar
+                      dataKey="rejected"
+                      fill="hsl(27, 80%, 50%)"
+                      radius={[4, 4, 0, 0]}
+                  />
+                  <Bar
+                      dataKey="pending"
+                      fill="hsl(85, 50%, 50%)"
+                      radius={[4, 4, 0, 0]}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* IP Claims & Recent Activity */}
+      <div className="grid gap-4 lg:grid-cols-3">
+        {/* IP Claims by Type */}
+        <Card className="bg-card lg:col-span-2">
+          <CardHeader>
+            <CardTitle>IP Claims by Type</CardTitle>
+            <CardDescription>Monthly claims categorized by IP type</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="h-[300px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={claimsData}>
+                  <defs>
+                    <linearGradient id="colorPatents" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="hsl(155, 70%, 45%)" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="hsl(155, 70%, 45%)" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="colorTrademarks" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="hsl(230, 50%, 55%)" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="hsl(230, 50%, 55%)" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="colorCopyrights" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="hsl(85, 50%, 50%)" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="hsl(85, 50%, 50%)" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(155, 10%, 25%)" />
+                  <XAxis
+                      dataKey="month"
+                      stroke="hsl(155, 10%, 50%)"
+                      fontSize={12}
+                  />
+                  <YAxis stroke="hsl(155, 10%, 50%)" fontSize={12} />
+                  <Tooltip
+                      contentStyle={{
+                        backgroundColor: "hsl(160, 10%, 14%)",
+                        border: "1px solid hsl(155, 15%, 28%)",
+                        borderRadius: "8px",
+                      }}
+                  />
+                  <Area
+                      type="monotone"
+                      dataKey="patents"
+                      stroke="hsl(155, 70%, 45%)"
+                      fillOpacity={1}
+                      fill="url(#colorPatents)"
+                      strokeWidth={2}
+                  />
+                  <Area
+                      type="monotone"
+                      dataKey="trademarks"
+                      stroke="hsl(230, 50%, 55%)"
+                      fillOpacity={1}
+                      fill="url(#colorTrademarks)"
+                      strokeWidth={2}
+                  />
+                  <Area
+                      type="monotone"
+                      dataKey="copyrights"
+                      stroke="hsl(85, 50%, 50%)"
+                      fillOpacity={1}
+                      fill="url(#colorCopyrights)"
+                      strokeWidth={2}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="mt-4 flex gap-6">
+              <div className="flex items-center gap-2">
+                <div className="h-3 w-3 rounded-full bg-primary" />
+                <span className="text-sm text-muted-foreground">Patents</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="h-3 w-3 rounded-full" style={{ backgroundColor: "hsl(230, 50%, 55%)" }} />
+                <span className="text-sm text-muted-foreground">Trademarks</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="h-3 w-3 rounded-full" style={{ backgroundColor: "hsl(85, 50%, 50%)" }} />
+                <span className="text-sm text-muted-foreground">Copyrights</span>
+              </div>
             </div>
           </CardContent>
         </Card>

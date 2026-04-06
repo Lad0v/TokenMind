@@ -33,12 +33,12 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet"
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import {
   Select,
   SelectContent,
@@ -551,22 +551,22 @@ export default function AuditLogsPage() {
         </CardContent>
       </Card>
 
-      {/* Detail Drawer */}
-      <Sheet open={!!selectedLog} onOpenChange={() => setSelectedLog(null)}>
-        <SheetContent className="w-full sm:max-w-xl overflow-y-auto">
+      {/* Detail Modal */}
+      <Dialog open={!!selectedLog} onOpenChange={() => setSelectedLog(null)}>
+        <DialogContent className="max-w-xl">
           {selectedLog && (
             <>
-              <SheetHeader>
-                <SheetTitle className="flex items-center gap-2">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
                   Audit Log {selectedLog.id}
                   {getSeverityBadge(selectedLog.severity)}
-                </SheetTitle>
-                <SheetDescription>
+                </DialogTitle>
+                <DialogDescription>
                   {selectedLog.action} at {new Date(selectedLog.timestamp).toLocaleString()}
-                </SheetDescription>
-              </SheetHeader>
+                </DialogDescription>
+              </DialogHeader>
 
-              <div className="mt-6 flex flex-col gap-6">
+              <div className="mt-6 flex flex-col gap-6 max-h-[60vh] overflow-y-auto [&::-webkit-scrollbar]:w-0 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-transparent">
                 {/* Event Info */}
                 <div className="flex flex-col gap-4">
                   <h3 className="font-semibold text-foreground">Event Information</h3>
@@ -685,8 +685,8 @@ export default function AuditLogsPage() {
               </div>
             </>
           )}
-        </SheetContent>
-      </Sheet>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

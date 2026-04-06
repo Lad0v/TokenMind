@@ -121,7 +121,7 @@ export default function MarketplacePage() {
       <Header/>
 
       {/* Page Content */}
-      <main className="container mx-auto px-4 lg:px-8 py-8">
+      <main className="container mx-auto px-4 lg:px-8 py-8 mt-20">
         {/* Page Header */}
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-foreground mb-2">Маркетплейс</h1>

@@ -34,13 +34,13 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-  SheetFooter,
-} from "@/components/ui/sheet"
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog"
 import {
   Select,
   SelectContent,
@@ -475,20 +475,21 @@ export default function IPReviewsPage() {
       </Card>
 
       {/* Detail Panel */}
-      <Sheet open={!!selectedClaim} onOpenChange={() => setSelectedClaim(null)}>
-        <SheetContent className="w-full sm:max-w-2xl overflow-y-auto">
+      <Dialog open={!!selectedClaim} onOpenChange={() => setSelectedClaim(null)}>
+        <DialogContent className="max-w-2xl">
           {selectedClaim && (
             <>
-              <SheetHeader>
-                <SheetTitle className="flex items-center gap-2">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
                   Patent Claim {selectedClaim.id}
                   {getStatusBadge(selectedClaim.status)}
-                </SheetTitle>
-                <SheetDescription>
+                </DialogTitle>
+                <DialogDescription>
                   Review patent details and API verification results
-                </SheetDescription>
-              </SheetHeader>
+                </DialogDescription>
+              </DialogHeader>
 
+              <div className="mt-6 max-h-[60vh] overflow-y-auto [&::-webkit-scrollbar]:w-0 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-transparent">
               <Tabs defaultValue="details" className="mt-6">
                 <TabsList className="grid w-full grid-cols-3">
                   <TabsTrigger value="details">Details</TabsTrigger>
@@ -641,8 +642,9 @@ export default function IPReviewsPage() {
                   </div>
                 </TabsContent>
               </Tabs>
+              </div>
 
-              <SheetFooter className="mt-6 flex gap-2">
+              <DialogFooter className="mt-6 flex gap-2">
                 {selectedClaim.status !== "approved" && selectedClaim.status !== "rejected" && (
                   <>
                     <Button
@@ -670,11 +672,11 @@ export default function IPReviewsPage() {
                     </Button>
                   </>
                 )}
-              </SheetFooter>
+              </DialogFooter>
             </>
           )}
-        </SheetContent>
-      </Sheet>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

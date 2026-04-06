@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { IPChainLogo } from "@/components/ipchain-logo"
+import { Header } from "@/components/user/header"
 import { 
   ArrowLeft, 
   Search, 
@@ -115,17 +116,19 @@ export default function NewPatentClaimPage() {
   return (
     <div className="min-h-screen bg-background">
       {/* Navigation */}
-      <header className="sticky top-0 z-50 border-b border-border/50 bg-background/80 backdrop-blur-xl">
-        <div className="container mx-auto px-4 lg:px-8">
-          <div className="flex h-16 items-center justify-between">
-            <Link href="/">
-              <IPChainLogo size="sm" />
-            </Link>
-          </div>
-        </div>
-      </header>
+      {/*<header className="sticky top-0 z-50 border-b border-border/50 bg-background/80 backdrop-blur-xl">*/}
+      {/*  <div className="container mx-auto px-4 lg:px-8">*/}
+      {/*    <div className="flex h-16 items-center justify-between">*/}
+      {/*      <Link href="/">*/}
+      {/*        <IPChainLogo size="sm" />*/}
+      {/*      </Link>*/}
+      {/*    </div>*/}
+      {/*  </div>*/}
+      {/*</header>*/}
 
-      <main className="container mx-auto px-4 lg:px-8 py-8">
+      <Header/>
+
+      <main className="container mx-auto px-4 lg:px-8 py-8 mt-20">
         <div className="max-w-2xl mx-auto">
           {/* Back link */}
           <Link 

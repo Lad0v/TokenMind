@@ -32,12 +32,12 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet"
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import {
   Select,
   SelectContent,
@@ -463,22 +463,22 @@ export default function AssetsPage() {
         </CardContent>
       </Card>
 
-      {/* Detail Sheet */}
-      <Sheet open={!!selectedAsset} onOpenChange={() => setSelectedAsset(null)}>
-        <SheetContent className="w-full sm:max-w-xl overflow-y-auto">
+      {/* Detail Modal */}
+      <Dialog open={!!selectedAsset} onOpenChange={() => setSelectedAsset(null)}>
+        <DialogContent className="max-w-xl">
           {selectedAsset && (
             <>
-              <SheetHeader>
-                <SheetTitle className="flex items-center gap-2">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
                   {selectedAsset.name}
                   {getStatusBadge(selectedAsset.status)}
-                </SheetTitle>
-                <SheetDescription>
+                </DialogTitle>
+                <DialogDescription>
                   {selectedAsset.id} | {selectedAsset.patentNumber}
-                </SheetDescription>
-              </SheetHeader>
+                </DialogDescription>
+              </DialogHeader>
 
-              <div className="mt-6 flex flex-col gap-6">
+              <div className="mt-6 flex flex-col gap-6 max-h-[60vh] overflow-y-auto [&::-webkit-scrollbar]:w-0 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-transparent">
                 {/* Token Info */}
                 {selectedAsset.tokenAddress && (
                   <>
@@ -605,8 +605,8 @@ export default function AssetsPage() {
               </div>
             </>
           )}
-        </SheetContent>
-      </Sheet>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

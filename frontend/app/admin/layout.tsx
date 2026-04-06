@@ -32,6 +32,7 @@ import {
   SidebarTrigger,
   SidebarInset,
 } from "@/components/ui/sidebar"
+import {IPChainLogo} from "@/components/ipchain-logo";
 
 const adminNavItems = [
   {
@@ -67,14 +68,18 @@ function AdminSidebar() {
   return (
     <Sidebar collapsible="icon" className="border-r border-border">
       <SidebarHeader className="border-b border-border p-4">
-        <Link href="/admin" className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary">
-            <Shield className="h-5 w-5 text-primary-foreground" />
-          </div>
-          <div className="flex flex-col group-data-[collapsible=icon]:hidden">
-            <span className="font-semibold text-foreground">VeriMint</span>
-            <span className="text-xs text-muted-foreground">Admin Panel</span>
-          </div>
+        {/*<Link href="/admin" className="flex items-center gap-3">*/}
+        {/*  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary">*/}
+        {/*    <Shield className="h-5 w-5 text-primary-foreground" />*/}
+        {/*  </div>*/}
+        {/*  <div className="flex flex-col group-data-[collapsible=icon]:hidden">*/}
+        {/*    <span className="font-semibold text-foreground">VeriMint</span>*/}
+        {/*    <span className="text-xs text-muted-foreground">Admin Panel</span>*/}
+        {/*  </div>*/}
+        {/*</Link>*/}
+
+        <Link href="/" className="flex items-center gap-2">
+          <IPChainLogo/>
         </Link>
       </SidebarHeader>
 

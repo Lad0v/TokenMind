@@ -12,7 +12,7 @@ export function CTA() {
           <span className="text-primary verimint-text-glow">интеллектуальную собственность</span>?
         </h2>
         <p className="mx-auto mt-6 max-w-2xl text-lg leading-relaxed text-muted-foreground">
-          Присоединяйтесь к растущему сообществу правообладателей и инвесторов на платформе IPChain.
+          Присоединяйтесь к растущему сообществу правообладателей и инвесторов на платформе TokenMind.
           Начните токенизацию прямо сейчас.
         </p>
 

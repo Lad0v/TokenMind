@@ -13,7 +13,7 @@ import { useRoleGuard } from "@/lib/use-role-guard"
 
 export default function IssuerClaimDetailPage() {
   const params = useParams<{ id: string }>()
-  const { status, isAuthorized } = useRoleGuard(["issuer", "user", "admin"])
+  const { status, isAuthorized } = useRoleGuard(["issuer", "investor", "user", "admin"])
   const [claim, setClaim] = useState<IpClaim | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)

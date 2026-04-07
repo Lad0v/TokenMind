@@ -8,7 +8,32 @@ import * as types from '@/types/api';
 // Store keys in localStorage
 const TOKEN_STORAGE_KEY = 'token_pair';
 const USER_ROLE_KEY = 'user_role';
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+const LEGACY_ACCESS_TOKEN_KEY = 'tokenmind.access_token';
+const LEGACY_REFRESH_TOKEN_KEY = 'tokenmind.refresh_token';
+const DEFAULT_API_BASE_URL = 'http://localhost:8000/api/v1';
+
+function resolveApiBaseUrl() {
+  const configuredBaseUrl =
+    process.env.NEXT_PUBLIC_API_BASE_URL ?? process.env.NEXT_PUBLIC_API_URL;
+
+  if (!configuredBaseUrl) {
+    return DEFAULT_API_BASE_URL;
+  }
+
+  const normalized = configuredBaseUrl.replace(/\/$/, '');
+
+  if (/\/api\/v\d+$/.test(normalized)) {
+    return normalized;
+  }
+
+  if (normalized.endsWith('/api')) {
+    return `${normalized}/v1`;
+  }
+
+  return `${normalized}/api/v1`;
+}
+
+const API_BASE_URL = resolveApiBaseUrl();
 
 class ApiClient {
   private axiosInstance: AxiosInstance;
@@ -77,6 +102,9 @@ class ApiClient {
   private storeTokens(tokens: types.TokenPair): void {
     if (typeof window !== 'undefined') {
       localStorage.setItem(TOKEN_STORAGE_KEY, JSON.stringify(tokens));
+      // Keep legacy token keys in sync for pages still using old session provider.
+      localStorage.setItem(LEGACY_ACCESS_TOKEN_KEY, tokens.access_token);
+      localStorage.setItem(LEGACY_REFRESH_TOKEN_KEY, tokens.refresh_token);
     }
   }
 
@@ -89,6 +117,8 @@ class ApiClient {
   private clearTokens(): void {
     if (typeof window !== 'undefined') {
       localStorage.removeItem(TOKEN_STORAGE_KEY);
+      localStorage.removeItem(LEGACY_ACCESS_TOKEN_KEY);
+      localStorage.removeItem(LEGACY_REFRESH_TOKEN_KEY);
     }
   }
 
@@ -109,6 +139,11 @@ class ApiClient {
     if (typeof window !== 'undefined') {
       localStorage.removeItem(USER_ROLE_KEY);
     }
+  }
+
+  clearStoredAuth(): void {
+    this.clearTokens();
+    this.clearUserRole();
   }
 
   // ============ AUTH ENDPOINTS ============

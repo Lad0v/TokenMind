@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { ExternalLink, Link2, Loader2, ShieldCheck, Unplug, User2, Wallet } from 'lucide-react'
 
+import { Header } from '@/components/user/header'
 import { useSession } from '@/components/providers/session-provider'
 import { useWallet } from '@/components/providers/wallet-provider'
 import { Badge } from '@/components/ui/badge'
@@ -124,15 +125,20 @@ export default function ProfilePage() {
 
   if (status === 'loading') {
     return (
-      <div className="mx-auto flex min-h-[50vh] max-w-5xl items-center justify-center px-4 py-16">
-        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+      <div className="min-h-screen bg-background">
+        <Header />
+        <div className="mx-auto mt-20 flex min-h-[50vh] max-w-5xl items-center justify-center px-4 py-16">
+          <Loader2 className="h-6 w-6 animate-spin text-primary" />
+        </div>
       </div>
     )
   }
 
   if (status !== 'authenticated' || !user) {
     return (
-      <div className="mx-auto max-w-3xl px-4 py-16">
+      <div className="min-h-screen bg-background">
+        <Header />
+        <div className="mx-auto mt-20 max-w-3xl px-4 py-16">
         <Card>
           <CardHeader>
             <CardTitle>Профиль недоступен</CardTitle>
@@ -148,13 +154,16 @@ export default function ProfilePage() {
           </CardContent>
         </Card>
       </div>
+      </div>
     )
   }
 
   const walletNeedsLink = Boolean(connectedAddress && connectedAddress !== primaryWallet?.wallet_address)
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-10 space-y-6">
+    <div className="min-h-screen bg-background">
+      <Header />
+      <main className="mx-auto mt-20 max-w-6xl px-4 py-10 space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="space-y-2">
           <p className="text-xs uppercase tracking-[0.22em] text-muted-foreground">Account Center</p>
@@ -317,6 +326,7 @@ export default function ProfilePage() {
           </div>
         </CardContent>
       </Card>
+      </main>
     </div>
   )
 }

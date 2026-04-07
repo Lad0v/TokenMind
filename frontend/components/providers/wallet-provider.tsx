@@ -3,7 +3,7 @@
 import * as React from 'react'
 
 import { useSession } from '@/components/providers/session-provider'
-import { userApi, type UserWallet } from '@/lib/api'
+import { type UserWallet } from '@/lib/api'
 import { getPhantomProvider, getSolanaBalance, getSolanaRpcUrl } from '@/lib/phantom'
 
 type ProviderStatus = 'checking' | 'ready' | 'unsupported'
@@ -44,15 +44,31 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
   const displayAddress = connectedAddress ?? primaryWallet?.wallet_address ?? null
 
+  const buildLocalWallet = React.useCallback((address: string): UserWallet => {
+    const now = new Date().toISOString()
+    return {
+      id: `local-${address}`,
+      wallet_address: address,
+      network: 'solana',
+      is_primary: true,
+      created_at: now,
+      updated_at: now,
+    }
+  }, [])
+
   const refreshWallets = React.useCallback(async () => {
     if (status !== 'authenticated') {
       setWallets([])
       return
     }
 
-    const nextWallets = await userApi.listWallets()
-    setWallets(nextWallets)
-  }, [status])
+    if (!connectedAddress) {
+      setWallets([])
+      return
+    }
+
+    setWallets([buildLocalWallet(connectedAddress)])
+  }, [buildLocalWallet, connectedAddress, status])
 
   React.useEffect(() => {
     const provider = getPhantomProvider()
@@ -70,11 +86,6 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     const handleDisconnect = () => setConnectedAddress(null)
 
     syncProviderAddress(provider.publicKey)
-    void provider.connect({ onlyIfTrusted: true }).then((response) => {
-      syncProviderAddress(response.publicKey)
-    }).catch(() => {
-      // Trusted reconnect is best-effort only.
-    })
 
     provider.on?.('connect', syncProviderAddress)
     provider.on?.('accountChanged', syncProviderAddress)
@@ -132,6 +143,15 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       const address = response.publicKey.toString()
       setConnectedAddress(address)
       return address
+    } catch (caughtError) {
+      if (
+        caughtError instanceof Error &&
+        caughtError.message.toLowerCase().includes('disconnected port')
+      ) {
+        throw new Error('Phantom временно недоступен. Откройте расширение и попробуйте снова.')
+      }
+
+      throw caughtError
     } finally {
       setIsConnecting(false)
     }
@@ -156,17 +176,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
     setIsUpdating(true)
     try {
-      const wallet = await userApi.linkWallet({
-        wallet_address: connectedAddress,
-        network: 'solana-devnet',
-        is_primary: true,
-      })
+      const wallet = buildLocalWallet(connectedAddress)
+      setWallets([wallet])
       await refreshWallets()
       return wallet
     } finally {
       setIsUpdating(false)
     }
-  }, [connectedAddress, refreshWallets, status])
+  }, [buildLocalWallet, connectedAddress, refreshWallets, status])
 
   const unlinkWallet = React.useCallback(async (walletId: string) => {
     if (status !== 'authenticated') {
@@ -175,12 +192,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
     setIsUpdating(true)
     try {
-      await userApi.unlinkWallet(walletId)
-      await refreshWallets()
+      setWallets((currentWallets) => currentWallets.filter((wallet) => wallet.id !== walletId))
     } finally {
       setIsUpdating(false)
     }
-  }, [refreshWallets, status])
+  }, [status])
 
   const value = React.useMemo<WalletContextValue>(
     () => ({

@@ -1,6 +1,6 @@
 # VeriMint Frontend (Next.js App Router)
 
-Frontend-прототип платформы IPChain/VeriMint с красивой публичной витриной и role-based интерфейсами:
+Frontend-прототип платформы TokenMind/VeriMint с красивой публичной витриной и role-based интерфейсами:
 
 - Публичная витрина `/`
 - Аутентификация `/auth/sign-in`, `/auth/sign-up`

@@ -30,7 +30,7 @@ import {
   SidebarTrigger,
   SidebarInset,
 } from "@/components/ui/sidebar"
-import {IPChainLogo} from "@/components/ipchain-logo";
+import { TokenMindLogo } from "@/components/tokenmind-logo"
 import { getDefaultRouteForRole } from "@/lib/api";
 import { useSession } from "@/components/providers/session-provider";
 
@@ -79,7 +79,7 @@ function AdminSidebar() {
         {/*</Link>*/}
 
         <Link href="/" className="flex items-center gap-2">
-          <IPChainLogo/>
+          <TokenMindLogo />
         </Link>
       </SidebarHeader>
 

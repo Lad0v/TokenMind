@@ -2,6 +2,7 @@
 
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { apiClient } from '@/lib/api-client';
+import { clearAuthTokens, loadAuthTokens } from '@/lib/auth-storage';
 import type * as types from '@/types/api';
 
 interface AuthContextType {
@@ -60,10 +61,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = useCallback(async () => {
     setIsLoading(true);
     try {
-      const refreshToken = apiClient.getStoredRefreshToken();
+      const refreshToken = apiClient.getStoredRefreshToken() ?? loadAuthTokens()?.refreshToken ?? null;
       if (refreshToken) {
         await apiClient.logout(refreshToken);
+      } else {
+        apiClient.clearStoredAuth();
+        clearAuthTokens();
       }
+      clearAuthTokens();
+      setUser(null);
+    } catch (error) {
+      console.error('Logout failed, clearing local auth state:', error);
+      apiClient.clearStoredAuth();
+      clearAuthTokens();
       setUser(null);
     } finally {
       setIsLoading(false);

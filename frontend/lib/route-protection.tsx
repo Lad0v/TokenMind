@@ -75,7 +75,7 @@ export function useProtectedRoute() {
 
 export function withProtection<P extends object>(
   Component: React.ComponentType<P>,
-  { requiresAuth = true, allowedRoles = [] }: RouteConfig = {}
+  { requiresAuth = true, allowedRoles = [] }: RouteConfig = { requiresAuth: true }
 ) {
   return function ProtectedComponent(props: P) {
     const { isAuthenticated, role, isLoading } = useAuth();

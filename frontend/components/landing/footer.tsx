@@ -1,6 +1,6 @@
 import Link from "next/link"
 import { Shield } from "lucide-react"
-import {IPChainLogo} from "@/components/ipchain-logo";
+import { TokenMindLogo } from "@/components/tokenmind-logo"
 
 const footerLinks = {
   platform: [
@@ -37,7 +37,7 @@ export function Footer() {
           {/* Brand */}
           <div className="lg:col-span-2">
             <Link href="/" className="flex items-center gap-2">
-              <IPChainLogo/>
+              <TokenMindLogo />
             </Link>
             <p className="mt-4 max-w-xs text-sm text-muted-foreground">
               Платформа для верификации и токенизации интеллектуальной собственности на блокчейне Solana.

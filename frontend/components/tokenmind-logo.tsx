@@ -2,13 +2,13 @@
 
 import { cn } from "@/lib/utils"
 
-interface IPChainLogoProps {
+interface TokenMindLogoProps {
   className?: string
   showText?: boolean
   size?: "sm" | "md" | "lg"
 }
 
-export function IPChainLogo({ className, showText = true, size = "md" }: IPChainLogoProps) {
+export function TokenMindLogo({ className, showText = true, size = "md" }: TokenMindLogoProps) {
   const sizeClasses = {
     sm: "h-8 w-8",
     md: "h-10 w-10",
@@ -65,7 +65,7 @@ export function IPChainLogo({ className, showText = true, size = "md" }: IPChain
       
       {showText && (
         <span className={cn("font-semibold tracking-tight text-foreground", textSizeClasses[size])}>
-          IPChain
+          TokenMind
         </span>
       )}
     </div>

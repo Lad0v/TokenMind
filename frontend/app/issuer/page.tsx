@@ -24,7 +24,7 @@ const statusConfig: Record<
 }
 
 export default function IssuerDashboardPage() {
-  const { status, user, isAuthorized } = useRoleGuard(["issuer", "user", "admin"])
+  const { status, user, isAuthorized } = useRoleGuard(["issuer", "investor", "user", "admin"])
   const [claims, setClaims] = useState<IpClaim[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)

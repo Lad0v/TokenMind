@@ -40,16 +40,45 @@ export interface WalletLoginVerifyRequest {
 
 export interface RegisterRequest {
   email: string
-  password: string
-  role: UserRole
+  solana_wallet_address: string
+  role?: 'investor'
   legal_name?: string
   country?: string
-  wallet_address?: string
 }
 
 export interface RegisterResponse {
   message: string
-  user_id?: string | null
+}
+
+export interface SubmitPatentRequest {
+  patent_number: string
+  patent_title: string
+  claimed_owner_name: string
+  email: string
+  phone: string
+  description?: string
+  jurisdiction?: string
+}
+
+export interface SubmitPatentResponse {
+  message: string
+  otp_sent_to: string
+  otp_purpose: string
+  submission_id: string
+}
+
+export interface VerifySubmitPatentOtpRequest {
+  email: string
+  code: string
+  submission_id: string
+}
+
+export interface VerifySubmitPatentOtpResponse {
+  verified: boolean
+  role_upgraded: boolean
+  new_role: UserRole
+  access_token: string
+  refresh_token: string
 }
 
 export interface AuthMeResponse {
@@ -111,14 +140,27 @@ export interface VerificationCaseReviewRequest {
 }
 
 export interface PatentPrecheckResponse {
-  status: string
-  patent_number: string
-  title?: string | null
-  owner?: string | null
-  metadata?: Record<string, unknown> | null
-  source_id?: string | null
-  prechecked: boolean
-  message?: string | null
+  exists: boolean
+  primary_source?: string | null
+  recommendation?: 'recommended' | 'requires_review' | 'not_recommended' | 'caution' | string
+  warnings?: string[]
+  cached?: boolean
+  normalized_record?: {
+    source?: string | null
+    source_id?: string | null
+    country_code?: string | null
+    kind_code?: string | null
+    title?: string | null
+    abstract?: string | null
+    filing_date?: string | null
+    publication_date?: string | null
+    grant_date?: string | null
+    status?: string | null
+    assignees?: Array<{ name?: string | null; type?: string | null; country?: string | null }>
+    inventors?: Array<{ name?: string | null; country?: string | null }>
+    cpc_classes?: string[]
+    citations_count?: number
+  } | null
 }
 
 export interface IpClaimDocument {
@@ -469,7 +511,7 @@ export function getDefaultRouteForRole(role: UserRole) {
     case 'compliance_officer':
       return '/admin'
     case 'investor':
-      return '/marketplace?tab=portfolio'
+      return '/investor'
     case 'issuer':
     case 'user':
     default:
@@ -484,6 +526,34 @@ export const authApi = {
       body: payload,
       auth: false,
     })
+  },
+  loginWithWallet(payload: { wallet_address: string; network?: string }) {
+    return apiRequest<LoginResponse>('/auth/login/wallet', {
+      method: 'POST',
+      body: payload,
+      auth: false,
+    })
+  },
+  submitPatent(payload: SubmitPatentRequest) {
+    return apiRequest<SubmitPatentResponse>('/auth/submit-patent', {
+      method: 'POST',
+      body: payload,
+    })
+  },
+  async verifySubmitPatentOtp(payload: VerifySubmitPatentOtpRequest) {
+    const response = await apiRequest<VerifySubmitPatentOtpResponse>('/auth/submit-patent/verify-otp', {
+      method: 'POST',
+      body: payload,
+    })
+
+    if (response.access_token && response.refresh_token) {
+      saveAuthTokens({
+        accessToken: response.access_token,
+        refreshToken: response.refresh_token,
+      })
+    }
+
+    return response
   },
   login(payload: LoginRequest) {
     return apiRequest<LoginResponse>('/auth/login', {
@@ -537,57 +607,57 @@ export const userApi = {
       body: payload,
     })
   },
-  reviewVerificationCase(caseId: string, decision: 'approved' | 'rejected', notes: string) {
-    const formData = new FormData()
-    formData.set('decision', decision)
-    formData.set('notes', notes)
-    return apiRequest<VerificationCaseResponse>(`/users/verification/review/${caseId}`, {
-      method: 'POST',
-      body: formData,
-    })
-  },
-  listWallets() {
-    return apiRequest<UserWallet[]>('/users/wallets')
-  },
-  linkWallet(payload: { wallet_address: string; network?: string; is_primary?: boolean }) {
-    return apiRequest<UserWallet>('/users/wallets', {
-      method: 'POST',
-      body: payload,
-    })
-  },
-  unlinkWallet(walletId: string) {
-    return apiRequest<{ success: boolean; message: string }>(`/users/wallets/${walletId}`, {
-      method: 'DELETE',
-    })
-  },
 }
 
 export const claimsApi = {
-  list(status?: string) {
-    const params = new URLSearchParams()
-    if (status) {
-      params.set('status', status)
+  async list(status?: string) {
+    const buildQuery = (nextStatus?: string) => {
+      const params = new URLSearchParams()
+      if (nextStatus) {
+        params.set('status', nextStatus)
+      }
+      params.set('skip', '0')
+      params.set('limit', '100')
+      return `/ip-claims?${params.toString()}`
     }
-    params.set('skip', '0')
-    params.set('limit', '100')
 
-    return apiRequest<IpClaimListResponse>(`/ip-claims?${params.toString()}`)
+    if (status) {
+      return apiRequest<IpClaimListResponse>(buildQuery(status))
+    }
+
+    const knownStatuses = [
+      'draft',
+      'submitted',
+      'prechecked',
+      'awaiting_kyc',
+      'under_review',
+      'approved',
+      'rejected',
+      'request_more_data',
+    ]
+
+    const responses = await Promise.all(
+      knownStatuses.map((nextStatus) => apiRequest<IpClaimListResponse>(buildQuery(nextStatus))),
+    )
+
+    const claimsById = new Map<string, IpClaim>()
+    responses.forEach((response) => {
+      response.items.forEach((item) => {
+        claimsById.set(item.id, item)
+      })
+    })
+
+    const items = Array.from(claimsById.values()).sort((first, second) => {
+      return new Date(second.updated_at).getTime() - new Date(first.updated_at).getTime()
+    })
+
+    return {
+      total: items.length,
+      items,
+    }
   },
   getById(claimId: string) {
     return apiRequest<IpClaim>(`/ip-claims/${claimId}`)
-  },
-  create(payload: {
-    patent_number: string
-    patent_title?: string
-    claimed_owner_name: string
-    description?: string
-    jurisdiction?: string
-    precheck_snapshot?: Record<string, unknown>
-  }) {
-    return apiRequest<IpClaim>('/ip-claims', {
-      method: 'POST',
-      body: payload,
-    })
   },
   uploadDocument(claimId: string, file: File, docType?: string) {
     const formData = new FormData()
@@ -612,10 +682,11 @@ export const claimsApi = {
   },
   precheck(payload: {
     patent_number: string
-    jurisdiction?: string
-    claimed_owner_name?: string
+    country_code: string
+    kind_code?: string
+    include_analytics?: boolean
   }) {
-    return apiRequest<PatentPrecheckResponse>('/ip/precheck', {
+    return apiRequest<PatentPrecheckResponse>('/patents/precheck/international', {
       method: 'POST',
       body: payload,
     })

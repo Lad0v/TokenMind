@@ -4,7 +4,7 @@ import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Shield, Menu, X } from "lucide-react"
 import { useState } from "react"
-import {IPChainLogo} from "@/components/ipchain-logo";
+import { TokenMindLogo } from "@/components/tokenmind-logo"
 
 export function Header() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
@@ -14,8 +14,8 @@ export function Header() {
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
         {/* Logo */}
         <Link href="/" className="flex items-center gap-2">
-          <IPChainLogo/>
-          {/*<span className="text-xl font-semibold text-foreground">IPChain</span>*/}
+          <TokenMindLogo />
+          {/*<span className="text-xl font-semibold text-foreground">TokenMind</span>*/}
         </Link>
 
         {/* Desktop Navigation */}

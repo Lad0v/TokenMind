@@ -2,12 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react"
 import Link from "next/link"
-import { CheckCircle2, Clock, Coins, FileText, Plus, Shield } from "lucide-react"
+import { ArrowRight, CheckCircle2, Clock, Coins, FileText, Plus, Shield, Store } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Header } from "@/components/user/header"
-import { claimsApi, type IpClaim, ApiError } from "@/lib/api"
+import { claimsApi, marketplaceApi, type IpClaim, type MarketplaceListing, ApiError } from "@/lib/api"
+import { formatStableDate } from "@/lib/date-format"
+import { formatWalletAddress } from "@/lib/phantom"
 import { useRoleGuard } from "@/lib/use-role-guard"
 
 const statusConfig: Record<
@@ -26,8 +28,40 @@ const statusConfig: Record<
 export default function IssuerDashboardPage() {
   const { status, user, isAuthorized } = useRoleGuard(["issuer", "user", "admin"])
   const [claims, setClaims] = useState<IpClaim[]>([])
+  const [listings, setListings] = useState<MarketplaceListing[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [listingNotice, setListingNotice] = useState<{
+    id: string
+    title: string
+    payoutWallet: string
+  } | null>(null)
+
+  useEffect(() => {
+    if (!isAuthorized || typeof window === "undefined") {
+      return
+    }
+
+    const rawValue = window.sessionStorage.getItem("tokenmind.lastListingCreated")
+    if (!rawValue) {
+      return
+    }
+
+    try {
+      const parsed = JSON.parse(rawValue) as { id?: string; title?: string; payoutWallet?: string }
+      if (parsed.id && parsed.title && parsed.payoutWallet) {
+        setListingNotice({
+          id: parsed.id,
+          title: parsed.title,
+          payoutWallet: parsed.payoutWallet,
+        })
+      }
+    } catch {
+      // Ignore stale session payloads from older UI versions.
+    } finally {
+      window.sessionStorage.removeItem("tokenmind.lastListingCreated")
+    }
+  }, [isAuthorized])
 
   useEffect(() => {
     if (!isAuthorized) {
@@ -40,28 +74,39 @@ export default function IssuerDashboardPage() {
       setIsLoading(true)
       setError(null)
 
-      try {
-        const response = await claimsApi.list()
-        if (!isCancelled) {
-          setClaims(response.items)
-        }
-      } catch (caughtError) {
-        if (isCancelled) {
-          return
-        }
+      const [claimsResult, listingsResult] = await Promise.allSettled([
+        claimsApi.list(),
+        marketplaceApi.listListings(),
+      ])
 
-        if (caughtError instanceof ApiError) {
-          setError(caughtError.message)
-        } else if (caughtError instanceof Error) {
-          setError(caughtError.message)
-        } else {
-          setError("Не удалось загрузить список заявок.")
-        }
-      } finally {
-        if (!isCancelled) {
-          setIsLoading(false)
-        }
+      if (isCancelled) {
+        return
       }
+
+      const nextErrors: string[] = []
+
+      if (claimsResult.status === "fulfilled") {
+        setClaims(claimsResult.value.items)
+      } else if (claimsResult.reason instanceof ApiError) {
+        nextErrors.push(claimsResult.reason.message)
+      } else if (claimsResult.reason instanceof Error) {
+        nextErrors.push(claimsResult.reason.message)
+      } else {
+        nextErrors.push("Не удалось загрузить список IP claims.")
+      }
+
+      if (listingsResult.status === "fulfilled") {
+        setListings(listingsResult.value.items)
+      } else if (listingsResult.reason instanceof ApiError) {
+        nextErrors.push(listingsResult.reason.message)
+      } else if (listingsResult.reason instanceof Error) {
+        nextErrors.push(listingsResult.reason.message)
+      } else {
+        nextErrors.push("Не удалось загрузить marketplace listings.")
+      }
+
+      setError(nextErrors.length > 0 ? nextErrors.join(" ") : null)
+      setIsLoading(false)
     }
 
     void loadClaims()
@@ -70,14 +115,38 @@ export default function IssuerDashboardPage() {
     }
   }, [isAuthorized])
 
+  const approvedClaims = useMemo(
+    () => claims.filter((claim) => claim.status === "approved"),
+    [claims],
+  )
+
+  const ownListings = useMemo(() => {
+    const ownClaimIds = new Set(claims.map((claim) => claim.id))
+
+    return listings.filter((listing) => {
+      if (listing.created_by_user_id && listing.created_by_user_id === user?.id) {
+        return true
+      }
+      return Boolean(listing.claim_id && ownClaimIds.has(listing.claim_id))
+    })
+  }, [claims, listings, user?.id])
+
+  const readyClaims = useMemo(() => {
+    const listedClaimIds = new Set(
+      ownListings.map((listing) => listing.claim_id).filter((value): value is string => Boolean(value)),
+    )
+
+    return approvedClaims.filter((claim) => !listedClaimIds.has(claim.id))
+  }, [approvedClaims, ownListings])
+
   const stats = useMemo(
     () => [
       { label: "Всего заявок", value: claims.length, icon: FileText },
       { label: "На проверке", value: claims.filter((claim) => claim.status === "under_review").length, icon: Clock },
       { label: "Одобрено", value: claims.filter((claim) => claim.status === "approved").length, icon: CheckCircle2 },
-      { label: "Токенизировано", value: 0, icon: Coins },
+      { label: "На маркетплейсе", value: ownListings.length, icon: Coins },
     ],
-    [claims],
+    [claims, ownListings.length],
   )
 
   if (status === "loading" || !isAuthorized) {
@@ -97,16 +166,24 @@ export default function IssuerDashboardPage() {
           <div>
             <h1 className="text-3xl font-bold text-foreground mb-2">Кабинет правообладателя</h1>
             <p className="text-muted-foreground">
-              Управляйте своими patent claims и отслеживайте review workflow
+              Управляйте IP claims, выпускайте токенизированные активы и публикуйте их на маркетплейсе
             </p>
           </div>
 
-          <Button asChild className="bg-primary hover:bg-primary/90 text-primary-foreground w-fit">
-            <Link href="/issuer/ip/new">
-              <Plus className="h-4 w-4 mr-2" />
-              Подать патент
-            </Link>
-          </Button>
+          <div className="flex flex-wrap gap-3">
+            <Button asChild variant="outline" className="w-fit">
+              <Link href="/issuer/assets/new">
+                <Store className="mr-2 h-4 w-4" />
+                Продать актив
+              </Link>
+            </Button>
+            <Button asChild className="bg-primary hover:bg-primary/90 text-primary-foreground w-fit">
+              <Link href="/issuer/ip/new">
+                <Plus className="h-4 w-4 mr-2" />
+                Подать патент
+              </Link>
+            </Button>
+          </div>
         </div>
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
@@ -143,6 +220,28 @@ export default function IssuerDashboardPage() {
             </Badge>
           </div>
         </div>
+
+        {listingNotice && (
+          <div className="mb-8 rounded-xl border border-primary/30 bg-primary/10 p-5">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="space-y-1">
+                <div className="text-sm font-medium text-foreground">Листинг опубликован</div>
+                <div className="text-sm text-muted-foreground">
+                  `{listingNotice.title}` уже доступен на маркетплейсе. Все тестовые SOL-платежи будут уходить на
+                  seller wallet {formatWalletAddress(listingNotice.payoutWallet)}.
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <Button asChild>
+                  <Link href={`/marketplace/${listingNotice.id}`}>Открыть listing</Link>
+                </Button>
+                <Button variant="outline" asChild>
+                  <Link href="/marketplace">Открыть marketplace</Link>
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
 
         <section className="rounded-xl border border-border bg-card/50 overflow-hidden">
           <div className="border-b border-border bg-muted/30 px-4 py-3">
@@ -202,14 +301,19 @@ export default function IssuerDashboardPage() {
                           </div>
                         </td>
                         <td className="p-4">
-                          <span className="text-sm text-muted-foreground">
-                            {new Date(claim.created_at).toLocaleDateString()}
-                          </span>
+                          <span className="text-sm text-muted-foreground">{formatStableDate(claim.created_at)}</span>
                         </td>
                         <td className="p-4 text-right">
-                          <Button variant="ghost" size="sm" asChild>
-                            <Link href={`/issuer/ip/${claim.id}`}>Открыть</Link>
-                          </Button>
+                          <div className="flex justify-end gap-2">
+                            {claim.status === "approved" && (
+                              <Button variant="outline" size="sm" asChild>
+                                <Link href={`/issuer/assets/new?claimId=${claim.id}`}>Листинг</Link>
+                              </Button>
+                            )}
+                            <Button variant="ghost" size="sm" asChild>
+                              <Link href={`/issuer/ip/${claim.id}`}>Открыть</Link>
+                            </Button>
+                          </div>
                         </td>
                       </tr>
                     )
@@ -221,13 +325,169 @@ export default function IssuerDashboardPage() {
         </section>
 
         <section className="mt-8 rounded-xl border border-border bg-card/50 p-6">
-          <h2 className="text-lg font-semibold text-foreground mb-2">Внешние модули</h2>
-          <p className="text-sm text-muted-foreground">
-            Токенизация, маркетплейс и asset management пока остаются внешними модулями. Для них нужен отдельный
-            backend-контур: assets, tokenization, listings и portfolio APIs.
-          </p>
+          <div className="mb-4 flex items-center justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-semibold text-foreground">Как выставить актив на маркетплейс</h2>
+              <p className="text-sm text-muted-foreground">
+                Рабочий seller flow теперь начинается прямо отсюда. Нужен approved IP claim и привязанный Phantom wallet.
+              </p>
+            </div>
+            <Button asChild variant="outline">
+              <Link href="/issuer/assets/new">
+                Открыть мастер листинга
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </Link>
+            </Button>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-3">
+            <StepCard
+              step="1"
+              title="Подай IP claim"
+              description="Создай заявку с патентом и документами через форму подачи."
+              href="/issuer/ip/new"
+              label="Новая заявка"
+            />
+            <StepCard
+              step="2"
+              title="Дождись approved"
+              description="После review claim перейдет в approved и станет доступен для листинга."
+            />
+            <StepCard
+              step="3"
+              title="Выставь на маркетплейс"
+              description="Открой мастер листинга, задай цену и количество. Покупатели будут отправлять SOL прямо на твой seller wallet."
+              href="/issuer/assets/new"
+              label="Продать актив"
+            />
+          </div>
+        </section>
+
+        <section className="mt-8 rounded-xl border border-border bg-card/50 p-6">
+          <div className="mb-4 flex items-center justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-semibold text-foreground">Готово к листингу</h2>
+              <p className="text-sm text-muted-foreground">
+                Эти approved claims еще не выставлены на маркетплейс. Нажми `Выставить`, чтобы открыть мастер уже с выбранным claim.
+              </p>
+            </div>
+            <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary">
+              {readyClaims.length} ready
+            </Badge>
+          </div>
+
+          {readyClaims.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-border px-4 py-8 text-sm text-muted-foreground">
+              Пока нет approved claims без листинга. Сначала одобри IP claim или создай новую заявку.
+            </div>
+          ) : (
+            <div className="grid gap-4 lg:grid-cols-2">
+              {readyClaims.map((claim) => (
+                <div key={claim.id} className="rounded-xl border border-primary/20 bg-primary/5 p-5">
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <code className="text-sm font-mono text-foreground">{claim.patent_number}</code>
+                    <Badge className="border-primary/30 bg-primary/10 text-primary">Approved</Badge>
+                  </div>
+                  <div className="mb-2 text-base font-semibold text-foreground">
+                    {claim.patent_title || claim.claimed_owner_name}
+                  </div>
+                  <div className="mb-4 text-sm text-muted-foreground">
+                    {claim.description || "Описание не добавлено. Его можно дополнить при создании asset/listing."}
+                  </div>
+                  <div className="flex flex-wrap gap-3">
+                    <Button asChild>
+                      <Link href={`/issuer/assets/new?claimId=${claim.id}`}>Продать актив</Link>
+                    </Button>
+                    <Button variant="outline" asChild>
+                      <Link href={`/issuer/ip/${claim.id}`}>Открыть claim</Link>
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="mt-8 rounded-xl border border-border bg-card/50 p-6">
+          <div className="mb-4 flex items-center justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-semibold text-foreground">Мои marketplace assets</h2>
+              <p className="text-sm text-muted-foreground">
+                Все listing assets, которые уже связаны с твоими claims или были созданы из этого кабинета.
+              </p>
+            </div>
+            <Badge variant="secondary">{ownListings.length} assets</Badge>
+          </div>
+
+          {ownListings.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-border px-4 py-8 text-sm text-muted-foreground">
+              Пока нет активов на маркетплейсе. Начни с блока `Готово к листингу` выше.
+            </div>
+          ) : (
+            <div className="grid gap-4 lg:grid-cols-2">
+              {ownListings.map((listing) => (
+                <div key={listing.id} className="rounded-xl border border-border bg-background/60 p-5">
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <div className="text-base font-semibold text-foreground">{listing.title}</div>
+                    <Badge variant={listing.status === "active" ? "default" : "secondary"}>
+                      {listing.status}
+                    </Badge>
+                  </div>
+                  <div className="mb-3 text-sm text-muted-foreground">
+                    {listing.patent_number} • {listing.token_symbol} • {listing.available_tokens}/{listing.total_tokens}
+                  </div>
+                  <div className="mb-4 text-sm text-foreground">
+                    Цена: {listing.price_per_token_sol.toFixed(4)} SOL за токен
+                  </div>
+                  <div className="mb-4 grid gap-2 text-sm text-muted-foreground">
+                    <div>Продано: {listing.sold_tokens} токенов</div>
+                    <div>Сделок: {listing.purchase_count}</div>
+                    <div>Выручка: {listing.volume_sol.toFixed(4)} SOL</div>
+                    <div>Payout wallet: {formatWalletAddress(listing.treasury_wallet_address)}</div>
+                  </div>
+                  <div className="flex flex-wrap gap-3">
+                    <Button asChild>
+                      <Link href={`/marketplace/${listing.id}`}>Открыть listing</Link>
+                    </Button>
+                    <Button variant="outline" asChild>
+                      <Link href="/marketplace">Открыть marketplace</Link>
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
       </main>
+    </div>
+  )
+}
+
+function StepCard({
+  step,
+  title,
+  description,
+  href,
+  label,
+}: {
+  step: string
+  title: string
+  description: string
+  href?: string
+  label?: string
+}) {
+  return (
+    <div className="rounded-xl border border-border bg-background/60 p-5">
+      <div className="mb-3 inline-flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary">
+        {step}
+      </div>
+      <div className="mb-2 text-base font-semibold text-foreground">{title}</div>
+      <div className="text-sm text-muted-foreground">{description}</div>
+      {href && label && (
+        <Button asChild variant="outline" className="mt-4">
+          <Link href={href}>{label}</Link>
+        </Button>
+      )}
     </div>
   )
 }

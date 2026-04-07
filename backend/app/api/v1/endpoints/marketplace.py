@@ -126,7 +126,7 @@ async def get_marketplace_listing(
 @router.post("/listings", response_model=MarketplaceListingRead, status_code=201)
 async def create_marketplace_listing(
     payload: CreateMarketplaceListingRequest,
-    current_user: User = Depends(require_roles("issuer", "admin", "compliance_officer")),
+    current_user: User = Depends(require_roles("issuer", "user", "admin", "compliance_officer")),
     db: AsyncSession = Depends(get_db),
 ):
     listing = await MarketplaceService.create_listing(db, payload, current_user)

@@ -59,7 +59,7 @@ class Settings(BaseSettings):
 
     SOLANA_RPC_URL: str = "https://api.devnet.solana.com"
     MARKETPLACE_NETWORK: str = "solana-devnet"
-    MARKETPLACE_TREASURY_WALLET: str = "9xQeWvG816bUx9EPfEZj3J2m55Cmw7oQwWJ4y9ZVJvUh"
+    MARKETPLACE_TREASURY_WALLET: str = "985C3WMzqDwvLsH6sNin1dTg3vJEsEdkCcFwsQFjWQbc"
 
     # Cache TTL for patent data (hours)
     PATENT_CACHE_TTL_HOURS: int = 48

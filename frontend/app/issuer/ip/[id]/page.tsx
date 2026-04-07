@@ -9,6 +9,7 @@ import { Header } from "@/components/user/header"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ApiError, claimsApi, toBackendAssetUrl, type IpClaim } from "@/lib/api"
+import { formatStableDateTime } from "@/lib/date-format"
 import { useRoleGuard } from "@/lib/use-role-guard"
 
 export default function IssuerClaimDetailPage() {
@@ -122,7 +123,7 @@ export default function IssuerClaimDetailPage() {
                   </div>
                   <div className="rounded-lg border border-border bg-background/50 p-4">
                     <p className="text-xs uppercase tracking-wider text-muted-foreground">Created At</p>
-                    <p className="text-sm text-foreground mt-1">{new Date(claim.created_at).toLocaleString()}</p>
+                    <p className="text-sm text-foreground mt-1">{formatStableDateTime(claim.created_at)}</p>
                   </div>
                 </div>
 
@@ -167,7 +168,7 @@ export default function IssuerClaimDetailPage() {
                       <div key={document.id} className="flex items-center justify-between rounded-lg border border-border bg-background/50 p-4">
                         <div>
                           <p className="text-sm text-foreground">{document.doc_type || "supporting_document"}</p>
-                          <p className="text-xs text-muted-foreground">{new Date(document.uploaded_at).toLocaleString()}</p>
+                          <p className="text-xs text-muted-foreground">{formatStableDateTime(document.uploaded_at)}</p>
                         </div>
                         <Button asChild variant="outline" size="sm">
                           <a href={toBackendAssetUrl(document.file_url) ?? "#"} target="_blank" rel="noreferrer">
@@ -193,7 +194,7 @@ export default function IssuerClaimDetailPage() {
                       <div key={review.id} className="rounded-lg border border-border bg-background/50 p-4">
                         <div className="flex items-center justify-between gap-3">
                           <p className="text-sm font-medium text-foreground">{review.decision}</p>
-                          <p className="text-xs text-muted-foreground">{new Date(review.created_at).toLocaleString()}</p>
+                          <p className="text-xs text-muted-foreground">{formatStableDateTime(review.created_at)}</p>
                         </div>
                         <p className="mt-2 text-sm text-muted-foreground">
                           Reviewer: {review.reviewer_email || "system"}

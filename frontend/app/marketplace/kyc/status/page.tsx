@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { useSession } from "@/components/providers/session-provider"
 import { ApiError, toBackendAssetUrl, userApi, type VerificationCaseResponse } from "@/lib/api"
+import { formatStableDateTime } from "@/lib/date-format"
 
 function getStatusMeta(status: string) {
   switch (status) {
@@ -63,7 +64,7 @@ function formatDate(value?: string | null) {
     return "—"
   }
 
-  return new Date(value).toLocaleString("ru-RU")
+  return formatStableDateTime(value)
 }
 
 function DetailRow({ label, value }: { label: string; value: string }) {

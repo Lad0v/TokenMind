@@ -51,8 +51,9 @@ FROM python:3.12-slim AS development
 
 WORKDIR /app
 
-# Install system dependencies including PostgreSQL dev headers
+# Install system dependencies including PostgreSQL dev headers and curl for healthchecks
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
     gcc \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*

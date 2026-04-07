@@ -1,28 +1,12 @@
 "use client"
 
-import * as React from "react"
-import {
-  Search,
-  Filter,
-  Eye,
-  Coins,
-  Clock,
-  CheckCircle2,
-  Pause,
-  Archive,
-  ExternalLink,
-  Copy,
-  MoreVertical,
-  TrendingUp,
-  DollarSign,
-  Package,
-} from "lucide-react"
+import Link from "next/link"
+import { useEffect, useMemo, useState } from "react"
+import { ArrowUpRight, Coins, Layers3, Loader2, Package, ShieldCheck } from "lucide-react"
 
-import { cn } from "@/lib/utils"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   Table,
   TableBody,
@@ -31,582 +15,220 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-  DropdownMenuSeparator,
-} from "@/components/ui/dropdown-menu"
-import { Separator } from "@/components/ui/separator"
+import { claimsApi, marketplaceApi, type IpClaim, type MarketplaceListing } from "@/lib/api"
+import { formatStableDate } from "@/lib/date-format"
+import { extractAnchorTokenizationConfig } from "@/lib/solana/marketplace-anchor"
 
-type AssetStatus = "pending_tokenization" | "tokenized" | "listed" | "paused" | "archived"
-
-interface Asset {
-  id: string
-  name: string
-  patentNumber: string
-  owner: string
-  ownerEmail: string
-  status: AssetStatus
-  tokenAddress?: string
-  totalSupply?: number
-  circulatingSupply?: number
-  pricePerToken?: number
-  marketCap?: number
-  createdAt: string
-  tokenizedAt?: string
-  listingId?: string
-  category: string
-  description: string
-}
-
-const mockAssets: Asset[] = [
-  {
-    id: "ASSET-001",
-    name: "ML Pattern Recognition Algorithm",
-    patentNumber: "US10123456B2",
-    owner: "Tech Innovations Inc",
-    ownerEmail: "patents@techinnovations.com",
-    status: "listed",
-    tokenAddress: "7xK9...3nPq",
-    totalSupply: 1000000,
-    circulatingSupply: 350000,
-    pricePerToken: 2.45,
-    marketCap: 857500,
-    createdAt: "2026-03-15T10:00:00",
-    tokenizedAt: "2026-03-20T14:30:00",
-    listingId: "LST-001",
-    category: "Software",
-    description: "Advanced machine learning algorithm for pattern recognition",
-  },
-  {
-    id: "ASSET-002",
-    name: "Sustainable Energy Storage",
-    patentNumber: "EP3456789A1",
-    owner: "Green Energy Solutions",
-    ownerEmail: "ip@greenenergy.eu",
-    status: "tokenized",
-    tokenAddress: "4mR2...8vWx",
-    totalSupply: 500000,
-    circulatingSupply: 0,
-    pricePerToken: 5.00,
-    marketCap: 0,
-    createdAt: "2026-03-18T09:00:00",
-    tokenizedAt: "2026-03-25T11:00:00",
-    category: "Energy",
-    description: "Innovative battery technology for sustainable power management",
-  },
-  {
-    id: "ASSET-003",
-    name: "Quantum Computing Interface",
-    patentNumber: "JP2024-123456",
-    owner: "Quantum Labs Co.",
-    ownerEmail: "legal@quantumlabs.jp",
-    status: "pending_tokenization",
-    createdAt: "2026-04-01T10:15:00",
-    category: "Hardware",
-    description: "Revolutionary interface protocol for quantum computing systems",
-  },
-  {
-    id: "ASSET-004",
-    name: "Blockchain Supply Chain",
-    patentNumber: "US98765432B1",
-    owner: "Supply Chain Tech LLC",
-    ownerEmail: "patents@supplytech.com",
-    status: "listed",
-    tokenAddress: "9pL5...2hNk",
-    totalSupply: 2000000,
-    circulatingSupply: 1200000,
-    pricePerToken: 1.25,
-    marketCap: 1500000,
-    createdAt: "2026-02-10T14:00:00",
-    tokenizedAt: "2026-02-15T16:00:00",
-    listingId: "LST-002",
-    category: "Software",
-    description: "Blockchain implementation for supply chain tracking",
-  },
-  {
-    id: "ASSET-005",
-    name: "Biotech Drug Delivery System",
-    patentNumber: "US11223344B1",
-    owner: "BioMed Research Inc",
-    ownerEmail: "ip@biomed.com",
-    status: "paused",
-    tokenAddress: "3kJ8...6qRt",
-    totalSupply: 750000,
-    circulatingSupply: 425000,
-    pricePerToken: 8.50,
-    marketCap: 3612500,
-    createdAt: "2026-01-20T08:00:00",
-    tokenizedAt: "2026-01-28T10:00:00",
-    listingId: "LST-003",
-    category: "Biotech",
-    description: "Novel drug delivery system using nanotechnology",
-  },
-  {
-    id: "ASSET-006",
-    name: "Autonomous Navigation v1",
-    patentNumber: "DE202400001",
-    owner: "AutoDrive GmbH",
-    ownerEmail: "patents@autodrive.de",
-    status: "archived",
-    tokenAddress: "1mN4...9sYz",
-    totalSupply: 300000,
-    circulatingSupply: 0,
-    pricePerToken: 0,
-    marketCap: 0,
-    createdAt: "2025-11-01T12:00:00",
-    tokenizedAt: "2025-11-10T14:00:00",
-    category: "Automotive",
-    description: "First generation autonomous vehicle navigation system",
-  },
-]
-
-function getStatusBadge(status: AssetStatus) {
-  switch (status) {
-    case "pending_tokenization":
-      return (
-        <Badge variant="outline" className="text-yellow-500 border-yellow-500/30">
-          <Clock className="mr-1 h-3 w-3" />
-          Pending
-        </Badge>
-      )
-    case "tokenized":
-      return (
-        <Badge variant="outline" className="text-blue-500 border-blue-500/30">
-          <Coins className="mr-1 h-3 w-3" />
-          Tokenized
-        </Badge>
-      )
-    case "listed":
-      return (
-        <Badge className="bg-primary/20 text-primary border-primary/30">
-          <CheckCircle2 className="mr-1 h-3 w-3" />
-          Listed
-        </Badge>
-      )
-    case "paused":
-      return (
-        <Badge variant="outline" className="text-orange-500 border-orange-500/30">
-          <Pause className="mr-1 h-3 w-3" />
-          Paused
-        </Badge>
-      )
-    case "archived":
-      return (
-        <Badge variant="secondary">
-          <Archive className="mr-1 h-3 w-3" />
-          Archived
-        </Badge>
-      )
-  }
-}
-
-function formatNumber(num: number): string {
-  if (num >= 1000000) {
-    return `${(num / 1000000).toFixed(2)}M`
-  }
-  if (num >= 1000) {
-    return `${(num / 1000).toFixed(1)}K`
-  }
-  return num.toString()
-}
-
-function formatCurrency(num: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(num)
+function formatSol(value: number) {
+  return `${value.toFixed(value >= 100 ? 2 : 4)} SOL`
 }
 
 export default function AssetsPage() {
-  const [selectedAsset, setSelectedAsset] = React.useState<Asset | null>(null)
-  const [statusFilter, setStatusFilter] = React.useState<string>("all")
-  const [searchQuery, setSearchQuery] = React.useState("")
+  const [claims, setClaims] = useState<IpClaim[]>([])
+  const [listings, setListings] = useState<MarketplaceListing[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-  const filteredData = mockAssets.filter((asset) => {
-    const matchesStatus = statusFilter === "all" || asset.status === statusFilter
-    const matchesSearch =
-      asset.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      asset.patentNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      asset.owner.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      asset.id.toLowerCase().includes(searchQuery.toLowerCase())
-    return matchesStatus && matchesSearch
-  })
+  useEffect(() => {
+    let cancelled = false
 
-  const totalMarketCap = mockAssets.reduce((sum, a) => sum + (a.marketCap || 0), 0)
-  const totalTokenized = mockAssets.filter((a) => a.tokenAddress).length
-  const totalListed = mockAssets.filter((a) => a.status === "listed").length
+    const loadData = async () => {
+      setIsLoading(true)
+      setError(null)
 
-  const handleAction = (action: "pause" | "archive" | "resume") => {
-    console.log(`Action: ${action} for ${selectedAsset?.id}`)
-  }
+      try {
+        const [claimsResponse, listingsResponse] = await Promise.all([
+          claimsApi.list(),
+          marketplaceApi.listListings(),
+        ])
+
+        if (cancelled) {
+          return
+        }
+
+        setClaims(claimsResponse.items)
+        setListings(listingsResponse.items)
+      } catch (caughtError) {
+        if (!cancelled) {
+          setError(caughtError instanceof Error ? caughtError.message : "Failed to load assets workspace.")
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoading(false)
+        }
+      }
+    }
+
+    void loadData()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const approvedClaims = useMemo(
+    () => claims.filter((claim) => claim.status === "approved"),
+    [claims],
+  )
+  const claimIdsWithListings = useMemo(
+    () => new Set(listings.map((listing) => listing.claim_id).filter(Boolean)),
+    [listings],
+  )
+  const readyForTokenization = useMemo(
+    () => approvedClaims.filter((claim) => !claimIdsWithListings.has(claim.id)),
+    [approvedClaims, claimIdsWithListings],
+  )
+  const anchorListings = useMemo(
+    () => listings.filter((listing) => extractAnchorTokenizationConfig(listing)),
+    [listings],
+  )
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">Assets Management</h1>
-        <p className="text-muted-foreground">Manage tokenized IP assets and their listings</p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground">Assets Management</h1>
+          <p className="text-muted-foreground">
+            Live admin view for approved IP claims, created marketplace listings and on-chain Anchor assets.
+          </p>
+        </div>
+        <Button asChild>
+          <Link href="/issuer/assets/new">
+            Создать asset
+            <ArrowUpRight className="ml-2 h-4 w-4" />
+          </Link>
+        </Button>
       </div>
 
-      {/* Stats */}
+      {error && (
+        <Card className="border-destructive/30 bg-destructive/10">
+          <CardContent className="pt-6 text-sm text-destructive">{error}</CardContent>
+        </Card>
+      )}
+
       <div className="grid gap-4 md:grid-cols-4">
-        <Card className="bg-card border-border">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Total Assets</p>
-                <p className="text-2xl font-bold text-foreground">{mockAssets.length}</p>
-              </div>
-              <Package className="h-8 w-8 text-muted-foreground/50" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="bg-card border-border">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Tokenized</p>
-                <p className="text-2xl font-bold text-foreground">{totalTokenized}</p>
-              </div>
-              <Coins className="h-8 w-8 text-primary/50" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="bg-card border-border">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Active Listings</p>
-                <p className="text-2xl font-bold text-foreground">{totalListed}</p>
-              </div>
-              <TrendingUp className="h-8 w-8 text-primary/50" />
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="bg-card border-border">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Total Market Cap</p>
-                <p className="text-2xl font-bold text-foreground">{formatCurrency(totalMarketCap)}</p>
-              </div>
-              <DollarSign className="h-8 w-8 text-primary/50" />
-            </div>
-          </CardContent>
-        </Card>
+        <MetricCard title="Marketplace Listings" value={String(listings.length)} icon={Package} />
+        <MetricCard title="On-chain Anchor" value={String(anchorListings.length)} icon={Coins} />
+        <MetricCard title="Active Listings" value={String(listings.filter((item) => item.status === "active").length)} icon={Layers3} />
+        <MetricCard title="Ready Claims" value={String(readyForTokenization.length)} icon={ShieldCheck} />
       </div>
 
-      {/* Filters */}
-      <Card className="bg-card border-border">
-        <CardContent className="pt-6">
-          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-            <div className="relative flex-1 max-w-sm">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                placeholder="Search by name, patent, or owner..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9 bg-input border-border"
-              />
+      <Card className="border-border">
+        <CardHeader>
+          <CardTitle>Live Listings</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="flex items-center justify-center py-14">
+              <Loader2 className="h-5 w-5 animate-spin text-primary" />
             </div>
-            <div className="flex items-center gap-2">
-              <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger className="w-[180px] bg-input border-border">
-                  <Filter className="mr-2 h-4 w-4" />
-                  <SelectValue placeholder="Filter by status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Statuses</SelectItem>
-                  <SelectItem value="pending_tokenization">Pending</SelectItem>
-                  <SelectItem value="tokenized">Tokenized</SelectItem>
-                  <SelectItem value="listed">Listed</SelectItem>
-                  <SelectItem value="paused">Paused</SelectItem>
-                  <SelectItem value="archived">Archived</SelectItem>
-                </SelectContent>
-              </Select>
+          ) : listings.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-border px-4 py-10 text-center text-sm text-muted-foreground">
+              Пока нет ни одного реального marketplace listing. Создай asset через issuer workspace.
             </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Table */}
-      <Card className="bg-card border-border">
-        <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow className="border-border hover:bg-transparent">
-                <TableHead>Asset</TableHead>
-                <TableHead>Owner</TableHead>
-                <TableHead>Category</TableHead>
-                <TableHead>Token Supply</TableHead>
-                <TableHead>Price</TableHead>
-                <TableHead>Market Cap</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredData.map((asset) => (
-                <TableRow key={asset.id} className="border-border">
-                  <TableCell>
-                    <div className="flex flex-col max-w-xs">
-                      <span className="font-medium truncate">{asset.name}</span>
-                      <span className="text-xs text-muted-foreground font-mono">{asset.patentNumber}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex flex-col">
-                      <span className="text-sm">{asset.owner}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline">{asset.category}</Badge>
-                  </TableCell>
-                  <TableCell>
-                    {asset.totalSupply ? (
-                      <div className="flex flex-col">
-                        <span className="text-sm">{formatNumber(asset.totalSupply)}</span>
-                        <span className="text-xs text-muted-foreground">
-                          {formatNumber(asset.circulatingSupply || 0)} circulating
-                        </span>
-                      </div>
-                    ) : (
-                      <span className="text-muted-foreground">-</span>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {asset.pricePerToken ? (
-                      <span className="font-medium">${asset.pricePerToken.toFixed(2)}</span>
-                    ) : (
-                      <span className="text-muted-foreground">-</span>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {asset.marketCap ? (
-                      <span className="font-medium">{formatCurrency(asset.marketCap)}</span>
-                    ) : (
-                      <span className="text-muted-foreground">-</span>
-                    )}
-                  </TableCell>
-                  <TableCell>{getStatusBadge(asset.status)}</TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setSelectedAsset(asset)}
-                      >
-                        <Eye className="h-4 w-4" />
-                      </Button>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="sm">
-                            <MoreVertical className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => setSelectedAsset(asset)}>
-                            <Eye className="mr-2 h-4 w-4" />
-                            View Details
-                          </DropdownMenuItem>
-                          {asset.tokenAddress && (
-                            <DropdownMenuItem>
-                              <ExternalLink className="mr-2 h-4 w-4" />
-                              View on Explorer
-                            </DropdownMenuItem>
-                          )}
-                          <DropdownMenuSeparator />
-                          {asset.status === "listed" && (
-                            <DropdownMenuItem className="text-orange-500">
-                              <Pause className="mr-2 h-4 w-4" />
-                              Pause Listing
-                            </DropdownMenuItem>
-                          )}
-                          {asset.status === "paused" && (
-                            <DropdownMenuItem className="text-primary">
-                              <CheckCircle2 className="mr-2 h-4 w-4" />
-                              Resume Listing
-                            </DropdownMenuItem>
-                          )}
-                          {asset.status !== "archived" && (
-                            <DropdownMenuItem className="text-destructive">
-                              <Archive className="mr-2 h-4 w-4" />
-                              Archive Asset
-                            </DropdownMenuItem>
-                          )}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                  </TableCell>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Asset</TableHead>
+                  <TableHead>Mode</TableHead>
+                  <TableHead>Issuer</TableHead>
+                  <TableHead>Supply</TableHead>
+                  <TableHead>Price</TableHead>
+                  <TableHead>Volume</TableHead>
+                  <TableHead>Created</TableHead>
+                  <TableHead className="text-right">Action</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {listings.map((listing) => {
+                  const anchorConfig = extractAnchorTokenizationConfig(listing)
+                  return (
+                    <TableRow key={listing.id}>
+                      <TableCell>
+                        <div className="font-medium text-foreground">{listing.title}</div>
+                        <div className="text-xs text-muted-foreground">{listing.patent_number}</div>
+                      </TableCell>
+                      <TableCell>
+                        {anchorConfig ? (
+                          <Badge className="border-primary/30 bg-primary/10 text-primary">Anchor</Badge>
+                        ) : (
+                          <Badge variant="secondary">Backend only</Badge>
+                        )}
+                      </TableCell>
+                      <TableCell>{listing.issuer_name}</TableCell>
+                      <TableCell>{listing.available_tokens} / {listing.total_tokens}</TableCell>
+                      <TableCell>{formatSol(listing.price_per_token_sol)}</TableCell>
+                      <TableCell>{formatSol(listing.volume_sol)}</TableCell>
+                      <TableCell>{formatStableDate(listing.created_at)}</TableCell>
+                      <TableCell className="text-right">
+                        <Button asChild size="sm" variant="outline">
+                          <Link href={`/marketplace/${listing.id}`}>Open</Link>
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          )}
         </CardContent>
       </Card>
 
-      {/* Detail Modal */}
-      <Dialog open={!!selectedAsset} onOpenChange={() => setSelectedAsset(null)}>
-        <DialogContent className="max-w-xl">
-          {selectedAsset && (
-            <>
-              <DialogHeader>
-                <DialogTitle className="flex items-center gap-2">
-                  {selectedAsset.name}
-                  {getStatusBadge(selectedAsset.status)}
-                </DialogTitle>
-                <DialogDescription>
-                  {selectedAsset.id} | {selectedAsset.patentNumber}
-                </DialogDescription>
-              </DialogHeader>
-
-              <div className="mt-6 flex flex-col gap-6 max-h-[60vh] overflow-y-auto [&::-webkit-scrollbar]:w-0 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-transparent">
-                {/* Token Info */}
-                {selectedAsset.tokenAddress && (
-                  <>
-                    <div className="flex flex-col gap-4">
-                      <h3 className="font-semibold text-foreground">Token Information</h3>
-                      <Card className="bg-secondary/20 border-border">
-                        <CardContent className="pt-6">
-                          <div className="grid gap-4">
-                            <div className="flex items-center justify-between">
-                              <span className="text-sm text-muted-foreground">Token Address</span>
-                              <div className="flex items-center gap-2">
-                                <span className="font-mono text-sm">{selectedAsset.tokenAddress}</span>
-                                <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
-                                  <Copy className="h-3 w-3" />
-                                </Button>
-                              </div>
-                            </div>
-                            <div className="flex items-center justify-between">
-                              <span className="text-sm text-muted-foreground">Total Supply</span>
-                              <span className="font-medium">{formatNumber(selectedAsset.totalSupply || 0)}</span>
-                            </div>
-                            <div className="flex items-center justify-between">
-                              <span className="text-sm text-muted-foreground">Circulating</span>
-                              <span className="font-medium">{formatNumber(selectedAsset.circulatingSupply || 0)}</span>
-                            </div>
-                            <div className="flex items-center justify-between">
-                              <span className="text-sm text-muted-foreground">Price per Token</span>
-                              <span className="font-medium">${selectedAsset.pricePerToken?.toFixed(2) || "0.00"}</span>
-                            </div>
-                            <div className="flex items-center justify-between">
-                              <span className="text-sm text-muted-foreground">Market Cap</span>
-                              <span className="font-medium text-primary">
-                                {formatCurrency(selectedAsset.marketCap || 0)}
-                              </span>
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
+      <Card className="border-border">
+        <CardHeader>
+          <CardTitle>Approved Claims Ready For Tokenization</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {readyForTokenization.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-border px-4 py-10 text-center text-sm text-muted-foreground">
+              Все approved claims уже связаны с marketplace listings или еще не прошли review.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {readyForTokenization.map((claim) => (
+                <div
+                  key={claim.id}
+                  className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-border bg-card/40 px-4 py-4"
+                >
+                  <div>
+                    <div className="font-medium text-foreground">{claim.patent_title || claim.patent_number}</div>
+                    <div className="text-sm text-muted-foreground">
+                      {claim.patent_number} • {claim.claimed_owner_name}
                     </div>
-                    <Separator />
-                  </>
-                )}
-
-                {/* Asset Details */}
-                <div className="flex flex-col gap-4">
-                  <h3 className="font-semibold text-foreground">Asset Details</h3>
-                  <div className="grid gap-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-muted-foreground">Category</span>
-                      <Badge variant="outline">{selectedAsset.category}</Badge>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-muted-foreground">Owner</span>
-                      <span className="text-sm">{selectedAsset.owner}</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-muted-foreground">Email</span>
-                      <span className="text-sm">{selectedAsset.ownerEmail}</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-muted-foreground">Created</span>
-                      <span className="text-sm">
-                        {new Date(selectedAsset.createdAt).toLocaleDateString()}
-                      </span>
-                    </div>
-                    {selectedAsset.tokenizedAt && (
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm text-muted-foreground">Tokenized</span>
-                        <span className="text-sm">
-                          {new Date(selectedAsset.tokenizedAt).toLocaleDateString()}
-                        </span>
-                      </div>
-                    )}
                   </div>
+                  <Button asChild size="sm">
+                    <Link href={`/issuer/assets/new?claimId=${claim.id}`}>Tokenize</Link>
+                  </Button>
                 </div>
-
-                <Separator />
-
-                {/* Description */}
-                <div className="flex flex-col gap-4">
-                  <h3 className="font-semibold text-foreground">Description</h3>
-                  <p className="text-sm text-muted-foreground">{selectedAsset.description}</p>
-                </div>
-
-                {/* Actions */}
-                {selectedAsset.status !== "archived" && selectedAsset.tokenAddress && (
-                  <>
-                    <Separator />
-                    <div className="flex flex-col gap-4">
-                      <h3 className="font-semibold text-foreground">Actions</h3>
-                      <div className="flex gap-2">
-                        {selectedAsset.status === "listed" && (
-                          <Button
-                            variant="outline"
-                            className="flex-1 text-orange-500 border-orange-500/30"
-                            onClick={() => handleAction("pause")}
-                          >
-                            <Pause className="mr-2 h-4 w-4" />
-                            Pause Listing
-                          </Button>
-                        )}
-                        {selectedAsset.status === "paused" && (
-                          <Button
-                            variant="outline"
-                            className="flex-1 text-primary border-primary/30"
-                            onClick={() => handleAction("resume")}
-                          >
-                            <CheckCircle2 className="mr-2 h-4 w-4" />
-                            Resume Listing
-                          </Button>
-                        )}
-                        <Button
-                          variant="outline"
-                          className="flex-1 text-destructive border-destructive/30"
-                          onClick={() => handleAction("archive")}
-                        >
-                          <Archive className="mr-2 h-4 w-4" />
-                          Archive
-                        </Button>
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-            </>
+              ))}
+            </div>
           )}
-        </DialogContent>
-      </Dialog>
+        </CardContent>
+      </Card>
     </div>
+  )
+}
+
+function MetricCard({
+  title,
+  value,
+  icon: Icon,
+}: {
+  title: string
+  value: string
+  icon: React.ComponentType<{ className?: string }>
+}) {
+  return (
+    <Card className="border-border">
+      <CardContent className="pt-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-sm text-muted-foreground">{title}</div>
+            <div className="text-2xl font-bold text-foreground">{value}</div>
+          </div>
+          <Icon className="h-8 w-8 text-primary/50" />
+        </div>
+      </CardContent>
+    </Card>
   )
 }

@@ -12,7 +12,7 @@ import { IPChainLogo } from "@/components/ipchain-logo"
 import { ApiError, authApi, getDefaultRouteForRole } from "@/lib/api"
 import { useSession } from "@/components/providers/session-provider"
 import { useWallet } from "@/components/providers/wallet-provider"
-import { formatWalletAddress, signPhantomMessage } from "@/lib/phantom"
+import { formatWalletAddress, getPhantomProvider, signPhantomMessage } from "@/lib/phantom"
 
 export default function LoginPage() {
   const router = useRouter()
@@ -78,18 +78,44 @@ export default function LoginPage() {
     setIsWalletLoading(true)
 
     try {
-      const walletAddress = connectedAddress ?? await connect()
-      if (!walletAddress) {
+      const provider = getPhantomProvider()
+      if (!provider) {
+        throw new Error("Phantom не найден в этом браузере.")
+      }
+      if (!provider.signMessage) {
+        throw new Error("Этот Phantom provider не поддерживает подпись сообщений.")
+      }
+
+      const connectedWalletAddress =
+        connectedAddress ??
+        (await connect()) ??
+        provider.publicKey?.toString() ??
+        null
+      if (!connectedWalletAddress) {
         throw new Error("Не удалось получить адрес Phantom кошелька.")
       }
 
-      const challenge = await authApi.createWalletLoginChallenge({
-        wallet_address: walletAddress,
-        network: "solana-devnet",
-      })
-      const signedMessage = await signPhantomMessage(challenge.message)
+      let walletAddress = provider.publicKey?.toString() ?? connectedWalletAddress
+
+      const signChallengeForWallet = async (activeWalletAddress: string) => {
+        const challenge = await authApi.createWalletLoginChallenge({
+          wallet_address: activeWalletAddress,
+          network: "solana-devnet",
+        })
+        const signedMessage = await signPhantomMessage(challenge.message, provider)
+
+        return { challenge, signedMessage }
+      }
+
+      let { challenge, signedMessage } = await signChallengeForWallet(walletAddress)
+
       if (signedMessage.walletAddress !== walletAddress) {
-        throw new Error("Phantom подписал challenge другим кошельком. Переключите аккаунт и попробуйте снова.")
+        walletAddress = signedMessage.walletAddress
+        ;({ challenge, signedMessage } = await signChallengeForWallet(walletAddress))
+      }
+
+      if (signedMessage.walletAddress !== walletAddress) {
+        throw new Error("Phantom подписал challenge другим кошельком. Переключите активный account в расширении и попробуйте снова.")
       }
 
       const currentUser = await loginWithWallet({

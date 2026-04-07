@@ -41,11 +41,6 @@ export async function sendMarketplaceSolanaTransfer({
     }),
   )
 
-  const simulation = await connection.simulateTransaction(transaction)
-  if (simulation.value.err) {
-    throw new Error(`Solana simulation failed: ${JSON.stringify(simulation.value.err)}`)
-  }
-
   const response = await provider.signAndSendTransaction(transaction)
   const signature =
     typeof response.signature === 'string'

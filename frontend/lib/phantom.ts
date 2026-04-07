@@ -22,6 +22,9 @@ export interface PhantomProvider {
   publicKey?: PhantomPublicKeyLike | null
   connect: (options?: { onlyIfTrusted?: boolean }) => Promise<{ publicKey: PhantomPublicKeyLike }>
   signMessage?: (message: Uint8Array, display?: 'utf8' | 'hex') => Promise<PhantomSignatureResponse>
+  signTransaction?: (transaction: unknown) => Promise<{
+    serialize: () => Uint8Array
+  }>
   signAndSendTransaction?: (transaction: unknown) => Promise<PhantomTransactionResponse>
   disconnect?: () => Promise<void>
   on?: (

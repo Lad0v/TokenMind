@@ -7,7 +7,6 @@ services:
       context: .
       dockerfile: Dockerfile
       target: production
-    container_name: ip-tokenization-api
     ports:
       - "8000:8000"
     env_file:
@@ -40,7 +39,6 @@ services:
       context: .
       dockerfile: Dockerfile
       target: production
-    container_name: ip-tokenization-alembic
     command: alembic upgrade head
     env_file:
       - .env
@@ -57,7 +55,6 @@ services:
   # ======================================================================
   db:
     image: postgres:16-alpine
-    container_name: ip-tokenization-db
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
@@ -81,7 +78,6 @@ services:
   # ======================================================================
   redis:
     image: redis:7-alpine
-    container_name: ip-tokenization-redis
     command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis}
     ports:
       - "6379:6379"
@@ -104,7 +100,6 @@ services:
   # ======================================================================
   minio:
     image: minio/minio:latest
-    container_name: ip-tokenization-minio
     command: server /data --console-address ":9001"
     environment:
       - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
@@ -128,7 +123,6 @@ services:
   # ======================================================================
   minio-init:
     image: minio/mc:latest
-    container_name: ip-tokenization-minio-init
     depends_on:
       minio:
         condition: service_healthy

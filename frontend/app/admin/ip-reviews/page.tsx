@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
 import { ApiError, claimsApi, toBackendAssetUrl, type IpClaim } from "@/lib/api"
+import { formatStableDate } from "@/lib/date-format"
 import { useRoleGuard } from "@/lib/use-role-guard"
 
 function getStatusBadge(status: string) {
@@ -268,7 +269,7 @@ export default function IPReviewsPage() {
                     </TableCell>
                     <TableCell>{getStatusBadge(item.status)}</TableCell>
                     <TableCell className="text-muted-foreground">
-                      {new Date(item.created_at).toLocaleDateString()}
+                      {formatStableDate(item.created_at)}
                     </TableCell>
                     <TableCell className="text-right">
                       <Button

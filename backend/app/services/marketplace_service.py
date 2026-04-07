@@ -1,7 +1,8 @@
-import random
+import asyncio
 import uuid
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+import hashlib
 
 import httpx
 from fastapi import HTTPException
@@ -32,7 +33,128 @@ def _make_reference_code() -> str:
     return f"TM-{uuid.uuid4().hex[:10].upper()}"
 
 
+_BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+_BASE58_ALPHABET_INDEX = {char: index for index, char in enumerate(_BASE58_ALPHABET)}
+_BUY_SHARES_DISCRIMINATOR = hashlib.sha256(b"global:buy_shares").digest()[:8]
+
+
 class MarketplaceService:
+    @staticmethod
+    def _decode_base58(value: str) -> bytes:
+        number = 0
+        for char in value.strip():
+            if char not in _BASE58_ALPHABET_INDEX:
+                raise HTTPException(status_code=400, detail="Invalid base58 payload in Solana transaction")
+            number = number * 58 + _BASE58_ALPHABET_INDEX[char]
+
+        decoded = bytearray()
+        while number:
+            number, remainder = divmod(number, 256)
+            decoded.append(remainder)
+        decoded = decoded[::-1]
+
+        leading_zeroes = len(value) - len(value.lstrip("1"))
+        return b"\x00" * leading_zeroes + bytes(decoded)
+
+    @staticmethod
+    def _extract_tokenization_config(listing: MarketplaceListing) -> dict | None:
+        metadata = listing.external_metadata or {}
+        if not isinstance(metadata, dict):
+            return None
+
+        tokenization = metadata.get("tokenization")
+        if isinstance(tokenization, dict) and tokenization.get("mode") == "anchor":
+            return tokenization
+        return None
+
+    @staticmethod
+    def _validate_anchor_tokenization_payload(external_metadata: dict | None, mint_address: str | None) -> dict | None:
+        if not isinstance(external_metadata, dict):
+            return None
+
+        tokenization = external_metadata.get("tokenization")
+        if not isinstance(tokenization, dict) or tokenization.get("mode") != "anchor":
+            return None
+
+        required_string_fields = [
+            "program_id",
+            "asset_id",
+            "asset_config",
+            "fraction_config",
+            "listing",
+            "sale_vault",
+            "vault_authority",
+            "mint",
+            "issuer_wallet",
+            "platform_treasury",
+        ]
+        missing = [
+            field
+            for field in required_string_fields
+            if not isinstance(tokenization.get(field), str) or not tokenization.get(field, "").strip()
+        ]
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Anchor tokenization metadata is incomplete: missing {', '.join(missing)}",
+            )
+
+        if mint_address and tokenization["mint"].strip() != mint_address.strip():
+            raise HTTPException(status_code=400, detail="Marketplace mint address does not match Anchor tokenization metadata")
+
+        return tokenization
+
+    @staticmethod
+    def _resolve_signer_wallets(transaction: dict) -> set[str]:
+        message = (transaction.get("transaction") or {}).get("message") or {}
+        account_keys = message.get("accountKeys") or []
+        if account_keys and isinstance(account_keys[0], dict):
+            return {
+                key.get("pubkey")
+                for key in account_keys
+                if isinstance(key, dict) and key.get("signer") and key.get("pubkey")
+            }
+
+        header = message.get("header") or {}
+        num_required_signatures = int(header.get("numRequiredSignatures", 0))
+        return {
+            str(account_keys[index])
+            for index in range(min(num_required_signatures, len(account_keys)))
+        }
+
+    @staticmethod
+    def _resolve_account_keys(message: dict) -> list[str]:
+        resolved: list[str] = []
+        for key in message.get("accountKeys") or []:
+            if isinstance(key, str):
+                resolved.append(key)
+            elif isinstance(key, dict) and key.get("pubkey"):
+                resolved.append(key["pubkey"])
+        return resolved
+
+    @staticmethod
+    def _resolve_instruction_program_id(instruction: dict, account_keys: list[str]) -> str | None:
+        program_id = instruction.get("programId")
+        if isinstance(program_id, str):
+            return program_id
+
+        program_index = instruction.get("programIdIndex")
+        if isinstance(program_index, int) and 0 <= program_index < len(account_keys):
+            return account_keys[program_index]
+        return None
+
+    @staticmethod
+    def _resolve_instruction_accounts(instruction: dict, account_keys: list[str]) -> list[str]:
+        resolved: list[str] = []
+        for account in instruction.get("accounts") or []:
+            if isinstance(account, int) and 0 <= account < len(account_keys):
+                resolved.append(account_keys[account])
+            elif isinstance(account, str):
+                resolved.append(account)
+            elif isinstance(account, dict) and account.get("pubkey"):
+                resolved.append(account["pubkey"])
+        return resolved
+
     @staticmethod
     async def release_expired_reservations(db: AsyncSession) -> int:
         now = _utcnow()
@@ -172,7 +294,52 @@ class MarketplaceService:
         payload: CreateMarketplaceListingRequest,
         creator: User,
     ) -> MarketplaceListing:
-        treasury_wallet_address = payload.treasury_wallet_address or settings.MARKETPLACE_TREASURY_WALLET
+        anchor_tokenization = MarketplaceService._validate_anchor_tokenization_payload(
+            payload.external_metadata,
+            payload.mint_address,
+        )
+        claim = None
+        if payload.claim_id:
+            from app.models.ip_claim import IpClaim, IpClaimStatus
+
+            claim = await db.get(IpClaim, payload.claim_id)
+            if not claim:
+                raise HTTPException(status_code=404, detail="IP claim not found")
+
+            if creator.role not in {"admin", "compliance_officer"} and claim.issuer_user_id != creator.id:
+                raise HTTPException(status_code=403, detail="You can create listings only for your own approved claims")
+            if claim.status != IpClaimStatus.approved.value:
+                raise HTTPException(status_code=400, detail="Only approved IP claims can be listed on the marketplace")
+
+        wallets = await UserService.list_wallet_links(db, creator.id)
+        linked_wallet_addresses = {wallet.wallet_address for wallet in wallets}
+        primary_wallet = next((wallet for wallet in wallets if wallet.is_primary), wallets[0] if wallets else None)
+
+        treasury_wallet_address = (payload.treasury_wallet_address or "").strip() or None
+        if anchor_tokenization:
+            treasury_wallet_address = anchor_tokenization["issuer_wallet"].strip()
+
+        if creator.role in {"issuer", "user"}:
+            if not primary_wallet:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Link a primary Solana wallet before creating a marketplace listing",
+                )
+            if treasury_wallet_address and treasury_wallet_address not in linked_wallet_addresses:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Marketplace payout wallet must match one of your linked Solana wallets",
+                )
+            treasury_wallet_address = treasury_wallet_address or primary_wallet.wallet_address
+        else:
+            if treasury_wallet_address and linked_wallet_addresses and treasury_wallet_address not in linked_wallet_addresses:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Selected payout wallet is not linked to this account",
+                )
+            if not treasury_wallet_address:
+                treasury_wallet_address = primary_wallet.wallet_address if primary_wallet else settings.MARKETPLACE_TREASURY_WALLET
+
         if not treasury_wallet_address:
             raise HTTPException(status_code=500, detail="Treasury wallet is not configured")
 
@@ -180,11 +347,19 @@ class MarketplaceService:
             claim_id=payload.claim_id,
             created_by_user_id=creator.id,
             title=payload.title.strip(),
-            patent_number=payload.patent_number.strip(),
+            patent_number=(claim.patent_number if claim else payload.patent_number).strip(),
             description=payload.description.strip() if payload.description else None,
-            issuer_name=payload.issuer_name.strip(),
+            issuer_name=(
+                payload.issuer_name.strip()
+                if payload.issuer_name
+                else (claim.claimed_owner_name.strip() if claim else creator.email)
+            ),
             category=payload.category.strip() if payload.category else None,
-            jurisdiction=payload.jurisdiction.strip() if payload.jurisdiction else None,
+            jurisdiction=(
+                payload.jurisdiction.strip()
+                if payload.jurisdiction
+                else (claim.jurisdiction.strip() if claim and claim.jurisdiction else None)
+            ),
             token_symbol=payload.token_symbol,
             token_name=payload.token_name.strip() if payload.token_name else None,
             price_per_token_sol=float(payload.price_per_token_sol),
@@ -244,8 +419,8 @@ class MarketplaceService:
             raise HTTPException(status_code=400, detail="Linked wallet network does not match listing network")
 
         quoted_total_sol = float(listing.price_per_token_sol * quantity)
-        reference_lamports = random.randint(1, 999)
-        expected_lamports = int(round(quoted_total_sol * LAMPORTS_PER_SOL)) + reference_lamports
+        tokenization = MarketplaceService._extract_tokenization_config(listing)
+        expected_lamports = int(round(quoted_total_sol * LAMPORTS_PER_SOL))
         total_sol = expected_lamports / LAMPORTS_PER_SOL
 
         listing.available_tokens -= quantity
@@ -346,33 +521,37 @@ class MarketplaceService:
 
     @staticmethod
     async def _fetch_solana_transaction(signature: str) -> dict:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            response = await client.post(
-                settings.SOLANA_RPC_URL,
-                json={
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "getTransaction",
-                    "params": [
-                        signature,
-                        {
-                            "commitment": "confirmed",
-                            "encoding": "jsonParsed",
-                            "maxSupportedTransactionVersion": 0,
-                        },
-                    ],
+        request_payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getTransaction",
+            "params": [
+                signature,
+                {
+                    "commitment": "confirmed",
+                    "encoding": "jsonParsed",
+                    "maxSupportedTransactionVersion": 0,
                 },
-            )
+            ],
+        }
 
-        response.raise_for_status()
-        payload = response.json()
-        if payload.get("error"):
-            raise HTTPException(status_code=400, detail="Unable to verify Solana transaction")
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            for attempt in range(6):
+                response = await client.post(settings.SOLANA_RPC_URL, json=request_payload)
+                response.raise_for_status()
+                payload = response.json()
 
-        transaction = payload.get("result")
-        if not transaction:
-            raise HTTPException(status_code=400, detail="Solana transaction not found or not confirmed yet")
-        return transaction
+                if payload.get("error"):
+                    raise HTTPException(status_code=400, detail="Unable to verify Solana transaction")
+
+                transaction = payload.get("result")
+                if transaction:
+                    return transaction
+
+                if attempt < 5:
+                    await asyncio.sleep(1.0)
+
+        raise HTTPException(status_code=400, detail="Solana transaction not found or not confirmed yet")
 
     @staticmethod
     def _extract_matching_transfer(
@@ -408,16 +587,63 @@ class MarketplaceService:
                 detail="Confirmed transaction does not contain the expected transfer",
             )
 
-        account_keys = (transaction.get("transaction") or {}).get("message", {}).get("accountKeys", [])
-        signer_wallets = {
-            key.get("pubkey")
-            for key in account_keys
-            if isinstance(key, dict) and key.get("signer")
-        }
+        signer_wallets = MarketplaceService._resolve_signer_wallets(transaction)
         if source_wallet not in signer_wallets:
             raise HTTPException(status_code=400, detail="Transaction signer does not match linked wallet")
 
         return matching_transfers[0]
+
+    @staticmethod
+    def _verify_anchor_listing_purchase(
+        transaction: dict,
+        purchase: MarketplacePurchase,
+        tokenization: dict,
+    ) -> dict:
+        meta = transaction.get("meta") or {}
+        if meta.get("err"):
+            raise HTTPException(status_code=400, detail="Solana transaction failed on-chain")
+
+        signer_wallets = MarketplaceService._resolve_signer_wallets(transaction)
+        if purchase.payment_wallet_address not in signer_wallets:
+            raise HTTPException(status_code=400, detail="Transaction signer does not match linked wallet")
+
+        program_id = tokenization.get("program_id")
+        listing_address = tokenization.get("listing")
+        if not isinstance(program_id, str) or not isinstance(listing_address, str):
+            raise HTTPException(status_code=400, detail="Listing is missing Anchor tokenization metadata")
+
+        message = (transaction.get("transaction") or {}).get("message") or {}
+        account_keys = MarketplaceService._resolve_account_keys(message)
+        instructions = message.get("instructions") or []
+
+        for instruction in instructions:
+            resolved_program_id = MarketplaceService._resolve_instruction_program_id(instruction, account_keys)
+            if resolved_program_id != program_id:
+                continue
+
+            resolved_accounts = MarketplaceService._resolve_instruction_accounts(instruction, account_keys)
+            if listing_address not in resolved_accounts:
+                continue
+
+            raw_data = instruction.get("data")
+            if not isinstance(raw_data, str):
+                continue
+
+            decoded = MarketplaceService._decode_base58(raw_data)
+            if not decoded.startswith(_BUY_SHARES_DISCRIMINATOR) or len(decoded) < 16:
+                continue
+
+            quantity = int.from_bytes(decoded[8:16], byteorder="little", signed=False)
+            if quantity != purchase.quantity:
+                raise HTTPException(status_code=400, detail="On-chain purchase quantity does not match reservation")
+
+            return {
+                "program_id": program_id,
+                "listing": listing_address,
+                "quantity": quantity,
+            }
+
+        raise HTTPException(status_code=400, detail="Confirmed transaction does not contain the expected Anchor purchase instruction")
 
     @staticmethod
     async def confirm_purchase(
@@ -448,12 +674,20 @@ class MarketplaceService:
             raise HTTPException(status_code=400, detail="This Solana transaction was already used")
 
         transaction = await MarketplaceService._fetch_solana_transaction(tx_signature)
-        transfer_info = MarketplaceService._extract_matching_transfer(
-            transaction=transaction,
-            source_wallet=purchase.payment_wallet_address,
-            destination_wallet=purchase.treasury_wallet_address,
-            expected_lamports=purchase.expected_lamports,
-        )
+        tokenization = MarketplaceService._extract_tokenization_config(purchase.listing) if purchase.listing else None
+        if tokenization:
+            transfer_info = MarketplaceService._verify_anchor_listing_purchase(
+                transaction=transaction,
+                purchase=purchase,
+                tokenization=tokenization,
+            )
+        else:
+            transfer_info = MarketplaceService._extract_matching_transfer(
+                transaction=transaction,
+                source_wallet=purchase.payment_wallet_address,
+                destination_wallet=purchase.treasury_wallet_address,
+                expected_lamports=purchase.expected_lamports,
+            )
 
         purchase.tx_signature = tx_signature
         purchase.status = MarketplacePurchaseStatus.confirmed.value
@@ -463,6 +697,7 @@ class MarketplaceService:
             "slot": transaction.get("slot"),
             "block_time": transaction.get("blockTime"),
             "transfer": transfer_info,
+            "mode": "anchor" if tokenization else "sol-transfer",
         }
         await db.flush()
         await db.refresh(purchase)

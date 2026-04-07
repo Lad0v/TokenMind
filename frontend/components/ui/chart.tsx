@@ -2,6 +2,7 @@
 
 import * as React from 'react'
 import * as RechartsPrimitive from 'recharts'
+import type { ValueType } from 'recharts/types/component/DefaultTooltipContent'
 
 import { cn } from '@/lib/utils'
 
@@ -23,6 +24,11 @@ type ChartContextProps = {
 }
 
 const ChartContext = React.createContext<ChartContextProps | null>(null)
+const numberFormatter = new Intl.NumberFormat('ru-RU')
+
+function formatTooltipValue(value: ValueType) {
+  return typeof value === 'number' ? numberFormatter.format(value) : String(value)
+}
 
 function useChart() {
   const context = React.useContext(ChartContext)
@@ -234,7 +240,7 @@ function ChartTooltipContent({
                     </div>
                     {item.value && (
                       <span className="text-foreground font-mono font-medium tabular-nums">
-                        {item.value.toLocaleString()}
+                        {formatTooltipValue(item.value)}
                       </span>
                     )}
                   </div>

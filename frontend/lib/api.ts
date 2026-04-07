@@ -300,6 +300,28 @@ export interface AuditLogListResponse {
   items: AuditLogResponse[]
 }
 
+export interface AdminUserResponse {
+  id: string
+  email: string
+  role: UserRole
+  status: string
+  created_at: string
+  updated_at: string
+  profile?: {
+    full_name?: string | null
+    country?: string | null
+    organization_name?: string | null
+    preferred_language?: string | null
+  } | null
+}
+
+export interface AdminUserListResponse {
+  total: number
+  skip: number
+  limit: number
+  items: AdminUserResponse[]
+}
+
 function resolveApiBaseUrl() {
   const configuredBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, '')
   if (configuredBaseUrl) {
@@ -623,6 +645,12 @@ export const claimsApi = {
 }
 
 export const adminApi = {
+  listUsers() {
+    const params = new URLSearchParams()
+    params.set('skip', '0')
+    params.set('limit', '100')
+    return apiRequest<AdminUserListResponse>(`/users?${params.toString()}`)
+  },
   listVerificationCases(status?: string) {
     const params = new URLSearchParams()
     params.set('skip', '0')
@@ -653,6 +681,28 @@ export const marketplaceApi = {
   listListings() {
     return apiRequest<MarketplaceListingsResponse>('/marketplace/listings', {
       auth: false,
+    })
+  },
+  createListing(payload: {
+    claim_id?: string
+    title: string
+    patent_number: string
+    description?: string
+    issuer_name: string
+    category?: string
+    jurisdiction?: string
+    token_symbol: string
+    token_name?: string
+    price_per_token_sol: number
+    total_tokens: number
+    network?: string
+    treasury_wallet_address?: string
+    mint_address?: string
+    external_metadata?: Record<string, unknown>
+  }) {
+    return apiRequest<MarketplaceListing>('/marketplace/listings', {
+      method: 'POST',
+      body: payload,
     })
   },
   getListing(listingId: string) {

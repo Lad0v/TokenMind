@@ -22,7 +22,12 @@ import { Label } from "@/components/ui/label"
 import { useSession } from "@/components/providers/session-provider"
 import { useWallet } from "@/components/providers/wallet-provider"
 import { ApiError, marketplaceApi, type MarketplaceListing, userApi } from "@/lib/api"
+import { formatStableDate } from "@/lib/date-format"
 import { formatWalletAddress, getPhantomProvider } from "@/lib/phantom"
+import {
+  buyAnchorMarketplaceListing,
+  extractAnchorTokenizationConfig,
+} from "@/lib/solana/marketplace-anchor"
 import { sendMarketplaceSolanaTransfer } from "@/lib/solana-marketplace"
 
 function formatSol(value: number) {
@@ -34,7 +39,11 @@ function formatDate(value?: string | null) {
     return "—"
   }
 
-  return new Date(value).toLocaleDateString("ru-RU")
+  return formatStableDate(value)
+}
+
+function solscanAddressUrl(address: string) {
+  return `https://solscan.io/account/${address}?cluster=devnet`
 }
 
 export default function ListingDetailPage() {
@@ -128,6 +137,10 @@ export default function ListingDetailPage() {
 
     return listing.price_per_token_sol * parsedQuantity
   }, [listing, parsedQuantity])
+  const anchorConfig = useMemo(
+    () => (listing ? extractAnchorTokenizationConfig(listing) : null),
+    [listing],
+  )
 
   const soldRatio = listing && listing.total_tokens > 0
     ? ((listing.total_tokens - listing.available_tokens) / listing.total_tokens) * 100
@@ -192,19 +205,42 @@ export default function ListingDetailPage() {
         quantity: parsedQuantity,
       })
 
-      const signature = await sendMarketplaceSolanaTransfer({
-        amountLamports: intent.transaction.amount_lamports,
-        walletAddress: connectedAddress,
-        treasuryWalletAddress: intent.transaction.treasury_wallet_address,
-        rpcUrl: intent.transaction.rpc_url,
-        provider,
-      })
+      const signature = anchorConfig
+        ? (
+            await buyAnchorMarketplaceListing({
+              buyerWalletAddress: connectedAddress,
+              listingAddress: anchorConfig.listing,
+              quantity: parsedQuantity,
+              rpcUrl: intent.transaction.rpc_url,
+              provider,
+            })
+          ).signature
+        : await sendMarketplaceSolanaTransfer({
+            amountLamports: intent.transaction.amount_lamports,
+            walletAddress: connectedAddress,
+            treasuryWalletAddress: intent.transaction.treasury_wallet_address,
+            rpcUrl: intent.transaction.rpc_url,
+            provider,
+          })
 
-      await marketplaceApi.confirmPurchase(intent.purchase.id, { tx_signature: signature })
-      setMessage("Покупка подтверждена. Сделка появилась в истории маркетплейса.")
+      const confirmedPurchase = await marketplaceApi.confirmPurchase(intent.purchase.id, { tx_signature: signature })
 
-      const refreshed = await marketplaceApi.getListing(listing.id)
-      setListing(refreshed)
+      if (typeof window !== "undefined") {
+        window.sessionStorage.setItem(
+          "tokenmind.lastPurchaseReceipt",
+          JSON.stringify({
+            purchaseId: confirmedPurchase.id,
+            listingId: confirmedPurchase.listing_id,
+            title: confirmedPurchase.listing.title,
+            quantity: confirmedPurchase.quantity,
+            totalSol: confirmedPurchase.total_sol,
+            txSignature: confirmedPurchase.tx_signature,
+            sellerWallet: confirmedPurchase.treasury_wallet_address,
+            confirmedAt: confirmedPurchase.confirmed_at ?? new Date().toISOString(),
+          }),
+        )
+      }
+
       router.replace("/marketplace?tab=history")
     } catch (caughtError) {
       if (caughtError instanceof ApiError) {
@@ -250,12 +286,19 @@ export default function ListingDetailPage() {
                       {listing.status === "active" ? "Активен" : listing.status}
                     </Badge>
                     <Badge variant="secondary">{listing.network}</Badge>
+                    {anchorConfig && (
+                      <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary">
+                        Anchor on-chain
+                      </Badge>
+                    )}
                   </div>
 
                   {listing.mint_address && (
-                    <Button variant="ghost" size="sm" className="text-muted-foreground">
-                      <ExternalLink className="mr-2 h-4 w-4" />
-                      Solscan
+                    <Button variant="ghost" size="sm" className="text-muted-foreground" asChild>
+                      <a href={solscanAddressUrl(listing.mint_address)} target="_blank" rel="noreferrer">
+                        <ExternalLink className="mr-2 h-4 w-4" />
+                        Solscan
+                      </a>
                     </Button>
                   )}
                 </div>
@@ -303,6 +346,13 @@ export default function ListingDetailPage() {
                     </div>
                   </div>
                 </div>
+
+                {anchorConfig && (
+                  <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                    <MetricBlock label="On-chain listing" value={anchorConfig.listing} mono />
+                    <MetricBlock label="Asset config PDA" value={anchorConfig.asset_config} mono />
+                  </div>
+                )}
               </div>
             </div>
 
@@ -362,7 +412,9 @@ export default function ListingDetailPage() {
                       <span className="text-lg font-semibold text-foreground">{formatSol(quotedTotal)}</span>
                     </div>
                     <div className="mt-1 text-xs text-muted-foreground">
-                      Итог на блокчейне будет отличаться на несколько lamports для уникальной сверки платежа.
+                      {anchorConfig
+                        ? "Покупка пройдет через Anchor `buy_shares`: SOL уйдет issuer account, а токены будут выданы из sale vault."
+                        : "Покупатель отправляет точную сумму SOL прямо на payout wallet продавца. После подтверждения сделка появится в истории."}
                     </div>
                   </div>
 
@@ -441,7 +493,7 @@ export default function ListingDetailPage() {
                     <div>
                       <div className="mb-1 text-sm font-medium text-foreground">Предупреждение о рисках</div>
                       <div className="text-xs text-muted-foreground">
-                        Solana settlement в этом MVP идет на devnet. Перед production нужно заменить treasury wallet, включить мониторинг и формализовать on-chain issuance.
+                        Solana settlement в этом MVP идет на devnet. Перед production нужно подключить индексатор, key management и отдельно контролировать права на program upgrade.
                       </div>
                     </div>
                   </div>

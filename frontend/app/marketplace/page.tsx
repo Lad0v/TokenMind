@@ -38,8 +38,20 @@ import {
   type MarketplaceStats,
   userApi,
 } from "@/lib/api"
+import { formatStableDateTime } from "@/lib/date-format"
+import { formatWalletAddress } from "@/lib/phantom"
 
 type MarketplaceTab = "marketplace" | "history" | "portfolio"
+type MarketplaceReceipt = {
+  purchaseId: string
+  listingId: string
+  title: string
+  quantity: number
+  totalSol: number
+  txSignature: string
+  sellerWallet: string
+  confirmedAt: string
+}
 
 const tabLabels: Record<MarketplaceTab, string> = {
   marketplace: "Торговая площадка",
@@ -63,7 +75,11 @@ function formatDate(value?: string | null) {
     return "—"
   }
 
-  return new Date(value).toLocaleString("ru-RU")
+  return formatStableDateTime(value)
+}
+
+function solscanTxUrl(signature: string) {
+  return `https://solscan.io/tx/${signature}?cluster=devnet`
 }
 
 function purchaseStatusLabel(status: string) {
@@ -102,6 +118,7 @@ export default function MarketplacePage() {
     current_value_sol: 0,
   })
   const [verificationStatus, setVerificationStatus] = useState<string>("not_started")
+  const [purchaseReceipt, setPurchaseReceipt] = useState<MarketplaceReceipt | null>(null)
   const [isLoadingListings, setIsLoadingListings] = useState(true)
   const [isLoadingPrivate, setIsLoadingPrivate] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -120,6 +137,37 @@ export default function MarketplacePage() {
     window.addEventListener("popstate", syncTabFromUrl)
     return () => {
       window.removeEventListener("popstate", syncTabFromUrl)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return
+    }
+
+    const rawValue = window.sessionStorage.getItem("tokenmind.lastPurchaseReceipt")
+    if (!rawValue) {
+      return
+    }
+
+    try {
+      const parsed = JSON.parse(rawValue) as Partial<MarketplaceReceipt>
+      if (
+        parsed.purchaseId &&
+        parsed.listingId &&
+        parsed.title &&
+        typeof parsed.quantity === "number" &&
+        typeof parsed.totalSol === "number" &&
+        parsed.txSignature &&
+        parsed.sellerWallet &&
+        parsed.confirmedAt
+      ) {
+        setPurchaseReceipt(parsed as MarketplaceReceipt)
+      }
+    } catch {
+      // Ignore stale session payloads from older UI versions.
+    } finally {
+      window.sessionStorage.removeItem("tokenmind.lastPurchaseReceipt")
     }
   }, [])
 
@@ -260,6 +308,11 @@ export default function MarketplacePage() {
           </div>
 
           <div className="flex flex-wrap gap-2">
+            {(user?.role === "issuer" || user?.role === "user" || user?.role === "admin") && (
+              <Button asChild variant="outline">
+                <Link href="/issuer/assets/new">Продать актив</Link>
+              </Button>
+            )}
             {(["marketplace", "history", "portfolio"] as MarketplaceTab[]).map((tab) => (
               <Button
                 key={tab}
@@ -314,6 +367,35 @@ export default function MarketplacePage() {
               </Card>
             )}
           </div>
+        )}
+
+        {purchaseReceipt && (
+          <Card className="border-primary/30 bg-primary/10">
+            <CardContent className="flex flex-wrap items-center justify-between gap-4 pt-6">
+              <div className="space-y-1">
+                <div className="text-sm font-medium text-foreground">Покупка подтверждена</div>
+                <div className="text-sm text-muted-foreground">
+                  {purchaseReceipt.quantity} токенов `{purchaseReceipt.title}` куплены за {formatSol(purchaseReceipt.totalSol)}.
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  Payout wallet продавца: {formatWalletAddress(purchaseReceipt.sellerWallet)}. Tx: {purchaseReceipt.txSignature}
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <Button asChild variant="outline">
+                  <a href={solscanTxUrl(purchaseReceipt.txSignature)} target="_blank" rel="noreferrer">
+                    Открыть tx
+                  </a>
+                </Button>
+                <Button asChild variant="outline">
+                  <Link href={`/marketplace/${purchaseReceipt.listingId}`}>Открыть listing</Link>
+                </Button>
+                <Button type="button" variant="ghost" onClick={() => setPurchaseReceipt(null)}>
+                  Скрыть
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         )}
 
         <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">

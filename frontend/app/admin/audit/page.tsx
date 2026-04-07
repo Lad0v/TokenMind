@@ -24,6 +24,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { ApiError, adminApi, type AuditLogResponse } from "@/lib/api"
+import { formatStableDateTime } from "@/lib/date-format"
 import { useRoleGuard } from "@/lib/use-role-guard"
 
 function getSeverityBadge(severity: string) {
@@ -235,7 +236,7 @@ export default function AuditLogsPage() {
                 filteredData.map((item) => (
                   <TableRow key={item.id} className="border-border">
                     <TableCell className="text-muted-foreground">
-                      {new Date(item.created_at).toLocaleString()}
+                      {formatStableDateTime(item.created_at)}
                     </TableCell>
                     <TableCell>
                       <Badge variant="outline">{item.category}</Badge>

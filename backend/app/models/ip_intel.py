@@ -125,8 +125,8 @@ class PatentCache(Base):
     ip_claim_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         Uuid, ForeignKey("ip_claims.id", ondelete="SET NULL"), nullable=True
     )
-    ip_claim: Mapped[Optional["Back"]] = relationship(
-        "Back", foreign_keys=[ip_claim_id], back_populates="patent_cache_records"
+    ip_claim: Mapped[Optional["IpClaim"]] = relationship(
+        "IpClaim", foreign_keys=[ip_claim_id], back_populates="patent_cache_records"
     )
 
 

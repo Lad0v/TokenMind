@@ -154,12 +154,6 @@ async def get_current_user(
             detail="Пользователь недоступен",
         )
 
-    if user.status == UserStatus.pending_otp.value:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Требуется завершение OTP верификации",
-        )
-
     return user
 
 

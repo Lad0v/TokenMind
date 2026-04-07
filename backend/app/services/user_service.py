@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -9,11 +10,16 @@ from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from app.models.user import Profile, User, UserStatus, UserRole
+from app.models.user import Profile, User, UserStatus, UserRole, VerificationStatus
 from app.schemas.user import ProfileUpdate
 
 _ITERATIONS = 260_000
 _HASH_ALG = "sha256"
+_SOLANA_WALLET_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
+
+
+def _is_valid_solana_wallet(value: str) -> bool:
+    return bool(_SOLANA_WALLET_RE.fullmatch(value.strip()))
 
 
 class UserService:
@@ -45,6 +51,26 @@ class UserService:
     async def get_by_email(db: AsyncSession, email: str) -> Optional[User]:
         result = await db.execute(select(User).where(User.email == email.lower().strip()))
         return result.scalar_one_or_none()
+
+    @staticmethod
+    async def get_by_wallet(
+        db: AsyncSession,
+        wallet_address: str,
+        network: str = "solana-devnet",
+    ) -> Optional[User]:
+        from app.models.user import WalletLink
+
+        stmt = (
+            select(User)
+            .join(WalletLink, WalletLink.user_id == User.id)
+            .where(
+                WalletLink.wallet_address == wallet_address.strip(),
+                WalletLink.network == network.strip().lower(),
+            )
+            .options(joinedload(User.profile))
+        )
+        result = await db.execute(stmt)
+        return result.scalars().unique().one_or_none()
 
     @classmethod
     async def authenticate(cls, db: AsyncSession, email: str, password: str) -> Optional[User]:
@@ -79,7 +105,7 @@ class UserService:
             email=email.lower().strip(),
             password_hash=cls.hash_password(password),
             role=role,
-            status="pending_otp",
+            status="active",
         )
         db.add(user)
         await db.flush()
@@ -103,7 +129,26 @@ class UserService:
         role: str = "investor",
     ) -> User:
         """Create investor user with wallet only — no OTP flow needed."""
+        from fastapi import HTTPException
+
         from app.models.user import WalletLink
+
+        normalized_wallet = wallet_address.strip()
+        normalized_network = "solana-devnet"
+
+        if not _is_valid_solana_wallet(normalized_wallet):
+            raise HTTPException(status_code=400, detail="Некорректный Solana wallet address")
+
+        existing_wallet_stmt = select(WalletLink).where(
+            WalletLink.wallet_address == normalized_wallet,
+            WalletLink.network == normalized_network,
+        )
+        existing_wallet = (await db.execute(existing_wallet_stmt)).scalar_one_or_none()
+        if existing_wallet:
+            raise HTTPException(
+                status_code=400,
+                detail="Этот Solana-кошелек уже привязан к другому аккаунту. Войдите через Phantom или используйте другой wallet.",
+            )
 
         user = User(
             email=email.lower().strip(),
@@ -116,8 +161,8 @@ class UserService:
 
         wallet = WalletLink(
             user_id=user.id,
-            wallet_address=wallet_address,
-            network="default",
+            wallet_address=normalized_wallet,
+            network=normalized_network,
             is_primary=True,
         )
         db.add(wallet)
@@ -141,6 +186,112 @@ class UserService:
     async def get_profile(db: AsyncSession, user_id: uuid.UUID) -> Optional[Profile]:
         result = await db.execute(select(Profile).where(Profile.user_id == user_id))
         return result.scalar_one_or_none()
+
+    @staticmethod
+    async def list_wallet_links(db: AsyncSession, user_id: uuid.UUID) -> list["WalletLink"]:
+        from app.models.user import WalletLink
+
+        stmt = (
+            select(WalletLink)
+            .where(WalletLink.user_id == user_id)
+            .order_by(WalletLink.is_primary.desc(), WalletLink.created_at.asc())
+        )
+        result = await db.execute(stmt)
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def link_wallet(
+        db: AsyncSession,
+        user_id: uuid.UUID,
+        wallet_address: str,
+        network: str = "solana-devnet",
+        is_primary: bool = True,
+    ) -> "WalletLink":
+        from fastapi import HTTPException
+
+        from app.models.user import WalletLink
+
+        normalized_wallet = wallet_address.strip()
+        normalized_network = network.strip().lower()
+        if not normalized_wallet:
+            raise HTTPException(status_code=400, detail="wallet_address обязателен")
+        if not _is_valid_solana_wallet(normalized_wallet):
+            raise HTTPException(status_code=400, detail="Некорректный Solana wallet address")
+
+        stmt = select(WalletLink).where(
+            WalletLink.wallet_address == normalized_wallet,
+            WalletLink.network == normalized_network,
+        )
+        result = await db.execute(stmt)
+        existing_wallet = result.scalar_one_or_none()
+        now = datetime.now(timezone.utc)
+
+        if existing_wallet and existing_wallet.user_id != user_id:
+            raise HTTPException(status_code=409, detail="Кошелек уже привязан к другому пользователю")
+
+        if is_primary:
+            current_wallets = await UserService.list_wallet_links(db, user_id)
+            for current_wallet in current_wallets:
+                if current_wallet.network == normalized_network and current_wallet.id != getattr(existing_wallet, "id", None):
+                    current_wallet.is_primary = False
+                    current_wallet.updated_at = now
+
+        if existing_wallet:
+            existing_wallet.is_primary = is_primary or existing_wallet.is_primary
+            existing_wallet.updated_at = now
+            await db.flush()
+            await db.refresh(existing_wallet)
+            return existing_wallet
+
+        wallet_link = WalletLink(
+            user_id=user_id,
+            wallet_address=normalized_wallet,
+            network=normalized_network,
+            is_primary=is_primary,
+        )
+        db.add(wallet_link)
+        await db.flush()
+        await db.refresh(wallet_link)
+        return wallet_link
+
+    @staticmethod
+    async def unlink_wallet(
+        db: AsyncSession,
+        user_id: uuid.UUID,
+        wallet_id: uuid.UUID,
+    ) -> None:
+        from fastapi import HTTPException
+
+        from app.models.user import WalletLink
+
+        stmt = select(WalletLink).where(
+            WalletLink.id == wallet_id,
+            WalletLink.user_id == user_id,
+        )
+        result = await db.execute(stmt)
+        wallet_link = result.scalar_one_or_none()
+        if not wallet_link:
+            raise HTTPException(status_code=404, detail="Кошелек не найден")
+
+        network = wallet_link.network
+        was_primary = wallet_link.is_primary
+        await db.delete(wallet_link)
+        await db.flush()
+
+        if not was_primary:
+            return
+
+        replacement_stmt = (
+            select(WalletLink)
+            .where(WalletLink.user_id == user_id, WalletLink.network == network)
+            .order_by(WalletLink.created_at.asc())
+        )
+        replacement_result = await db.execute(replacement_stmt)
+        replacement = replacement_result.scalars().first()
+        if replacement:
+            replacement.is_primary = True
+            replacement.updated_at = datetime.now(timezone.utc)
+            await db.flush()
 
     @staticmethod
     async def upsert_profile(db: AsyncSession, user_id: uuid.UUID, data: ProfileUpdate) -> Profile:
@@ -214,6 +365,33 @@ class UserService:
         await db.flush()
         await db.refresh(vc)
         return vc
+
+    @staticmethod
+    async def ensure_initial_verification_case(db: AsyncSession, user: User) -> None:
+        """Create a starter verification case for issuer/user flows if one does not exist."""
+        if user.role not in {
+            UserRole.user.value,
+            UserRole.issuer.value,
+            UserRole.investor.value,
+            UserRole.user,
+            UserRole.issuer,
+            UserRole.investor,
+        }:
+            return
+
+        existing_case = await UserService.get_latest_verification_case(db, user.id)
+        if existing_case:
+            return
+
+        from app.models.user import VerificationCase
+
+        db.add(
+            VerificationCase(
+                user_id=user.id,
+                status=VerificationStatus.not_started.value,
+            )
+        )
+        await db.flush()
 
     @staticmethod
     async def review_verification_case(
@@ -486,3 +664,60 @@ class UserService:
         )
 
         return user
+
+    @staticmethod
+    async def list_verification_cases_admin(
+        db: AsyncSession,
+        skip: int = 0,
+        limit: int = 50,
+        status: Optional[VerificationStatus] = None,
+        search: Optional[str] = None,
+    ) -> tuple[list["VerificationCase"], int]:
+        """List verification cases with related user/profile for admin queue."""
+        from app.models.user import VerificationCase
+
+        query = (
+            select(VerificationCase)
+            .options(joinedload(VerificationCase.user).joinedload(User.profile))
+        )
+        count_query = select(func.count()).select_from(VerificationCase)
+
+        filters = []
+        if status is not None:
+            filters.append(VerificationCase.status == status)
+
+        if search:
+            search_term = f"%{search.lower().strip()}%"
+            filters.append(
+                or_(
+                    User.email.ilike(search_term),
+                    Profile.full_name.ilike(search_term),
+                )
+            )
+            query = query.join(VerificationCase.user).outerjoin(User.profile)
+            count_query = count_query.join(VerificationCase.user).outerjoin(User.profile)
+
+        if filters:
+            query = query.where(*filters)
+            count_query = count_query.where(*filters)
+
+        query = query.order_by(VerificationCase.created_at.desc()).offset(skip).limit(limit)
+        total = (await db.execute(count_query)).scalar() or 0
+        items = (await db.execute(query)).scalars().unique().all()
+        return list(items), total
+
+    @staticmethod
+    async def get_verification_case_admin_detail(
+        db: AsyncSession,
+        case_id: uuid.UUID,
+    ) -> Optional["VerificationCase"]:
+        """Get one verification case with related user/profile."""
+        from app.models.user import VerificationCase
+
+        stmt = (
+            select(VerificationCase)
+            .where(VerificationCase.id == case_id)
+            .options(joinedload(VerificationCase.user).joinedload(User.profile))
+        )
+        result = await db.execute(stmt)
+        return result.scalars().unique().one_or_none()

@@ -5,8 +5,10 @@ from pathlib import Path
 from fastapi import UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.models.ip_claim import IpClaim, IpClaimStatus, IpDocument, IpReview, IpReviewDecision
+from app.models.user import User
 from app.schemas.ip_claim import CreateIpClaimRequest, IpClaimReviewRequest
 
 
@@ -34,22 +36,58 @@ class IpClaimService:
         return claim
 
     @staticmethod
-    async def list_claims(db: AsyncSession, status_filter: str | None, skip: int, limit: int):
-        query = select(IpClaim)
+    async def list_claims(
+        db: AsyncSession,
+        viewer: User,
+        status_filter: str | None,
+        skip: int,
+        limit: int,
+    ):
+        query = (
+            select(IpClaim)
+            .options(
+                joinedload(IpClaim.issuer).joinedload(User.profile),
+                selectinload(IpClaim.documents),
+                selectinload(IpClaim.reviews).joinedload(IpReview.reviewer),
+            )
+        )
         count_query = select(func.count()).select_from(IpClaim)
+
+        filters = []
         if status_filter:
-            query = query.where(IpClaim.status == status_filter)
-            count_query = count_query.where(IpClaim.status == status_filter)
+            filters.append(IpClaim.status == status_filter)
+
+        if viewer.role in {"admin", "compliance_officer"}:
+            pass
+        elif viewer.role == "investor":
+            filters.append(IpClaim.status == IpClaimStatus.approved.value)
+        else:
+            filters.append(IpClaim.issuer_user_id == viewer.id)
+
+        if filters:
+            query = query.where(*filters)
+            count_query = count_query.where(*filters)
 
         query = query.order_by(IpClaim.created_at.desc()).offset(skip).limit(limit)
 
         total = (await db.execute(count_query)).scalar() or 0
-        items = (await db.execute(query)).scalars().all()
+        items = (await db.execute(query)).scalars().unique().all()
         return total, items
 
     @staticmethod
-    async def get_by_id(db: AsyncSession, claim_id: uuid.UUID) -> IpClaim | None:
-        result = await db.execute(select(IpClaim).where(IpClaim.id == claim_id))
+    async def get_by_id(
+        db: AsyncSession,
+        claim_id: uuid.UUID,
+        with_relations: bool = False,
+    ) -> IpClaim | None:
+        query = select(IpClaim).where(IpClaim.id == claim_id)
+        if with_relations:
+            query = query.options(
+                joinedload(IpClaim.issuer).joinedload(User.profile),
+                selectinload(IpClaim.documents),
+                selectinload(IpClaim.reviews).joinedload(IpReview.reviewer),
+            )
+        result = await db.execute(query)
         return result.scalar_one_or_none()
 
     @staticmethod

@@ -103,7 +103,7 @@ class IpDocument(Base):
         Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
 
-    ip_claim: Mapped["Back"] = relationship(back_populates="documents")
+    ip_claim: Mapped["IpClaim"] = relationship("IpClaim", back_populates="documents")
 
 
 class IpReview(Base):
@@ -127,7 +127,7 @@ class IpReview(Base):
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
 
-    ip_claim: Mapped["Back"] = relationship(back_populates="reviews")
+    ip_claim: Mapped["IpClaim"] = relationship("IpClaim", back_populates="reviews")
     reviewer: Mapped[Optional["User"]] = relationship(
         "User", foreign_keys=[reviewer_id], back_populates="ip_claim_reviews"
     )

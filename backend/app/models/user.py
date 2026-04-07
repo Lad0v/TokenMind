@@ -117,9 +117,9 @@ class User(Base):
         foreign_keys="[Patent.owner_user_id]",
         back_populates="owner",
     )
-    ip_claims: Mapped[List["Back"]] = relationship(
-        "Back",
-        foreign_keys="[Back.issuer_user_id]",
+    ip_claims: Mapped[List["IpClaim"]] = relationship(
+        "IpClaim",
+        foreign_keys="IpClaim.issuer_user_id",
         back_populates="issuer",
     )
     ip_claim_reviews: Mapped[List["IpReview"]] = relationship(

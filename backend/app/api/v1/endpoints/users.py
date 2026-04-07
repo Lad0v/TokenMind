@@ -13,7 +13,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.security import get_current_user, require_roles
 from app.models.user import User, VerificationStatus
-from app.schemas.user import ProfileRead, ProfileUpdate, VerificationCaseRead
+from app.schemas.auth import GenericSuccessResponse
+from app.schemas.user import (
+    ProfileRead,
+    ProfileUpdate,
+    VerificationCaseRead,
+    WalletLinkCreate,
+    WalletLinkRead,
+)
 from app.services.user_service import UserService
 from app.services.file_storage import save_verification_documents
 
@@ -41,6 +48,39 @@ async def update_my_profile(
     return ProfileRead(legal_name=profile.full_name, country=profile.country)
 
 
+@router.get("/wallets", response_model=list[WalletLinkRead])
+async def list_my_wallets(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await UserService.list_wallet_links(db, current_user.id)
+
+
+@router.post("/wallets", response_model=WalletLinkRead, status_code=201)
+async def link_my_wallet(
+    payload: WalletLinkCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await UserService.link_wallet(
+        db=db,
+        user_id=current_user.id,
+        wallet_address=payload.wallet_address,
+        network=payload.network,
+        is_primary=payload.is_primary,
+    )
+
+
+@router.delete("/wallets/{wallet_id}", response_model=GenericSuccessResponse)
+async def unlink_my_wallet(
+    wallet_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await UserService.unlink_wallet(db=db, user_id=current_user.id, wallet_id=wallet_id)
+    return GenericSuccessResponse(message="Кошелек отвязан")
+
+
 # --- Verification case endpoints ---
 
 
@@ -53,10 +93,10 @@ async def submit_verification_documents(
     db: AsyncSession = Depends(get_db),
 ):
     """Step 2 — Document Collection: upload ID, selfie, and provide address."""
-    if current_user.role not in {"user", "issuer"}:
+    if current_user.role not in {"user", "issuer", "investor"}:
         raise HTTPException(
             status_code=400,
-            detail="Верификация доступна только для patent submitter",
+            detail="Верификация доступна только для авторизованных пользователей платформы",
         )
 
     existing_vc = await UserService.get_latest_verification_case(db, current_user.id)

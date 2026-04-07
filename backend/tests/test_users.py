@@ -108,8 +108,8 @@ async def test_submit_verification_documents(client: AsyncClient, make_user, aut
     assert vc["user_address"] == "123 Main St"
 
 
-async def test_submit_verification_documents_wrong_role(client: AsyncClient, make_user, auth_headers):
-    """POST /users/verification/documents → 400 for non-submitter role."""
+async def test_submit_verification_documents_investor(client: AsyncClient, make_user, auth_headers):
+    """POST /users/verification/documents → 201 for investor KYS flow."""
     user = await make_user(role="investor", status="active")
     headers = auth_headers(user)
 
@@ -123,7 +123,62 @@ async def test_submit_verification_documents_wrong_role(client: AsyncClient, mak
         files=files,
         data={"user_address": "123 Main St"},
     )
+    assert resp.status_code == 201
+    assert resp.json()["status"] == VerificationStatus.pending.value
+
+
+async def test_submit_verification_documents_wrong_role(client: AsyncClient, make_user, auth_headers):
+    """POST /users/verification/documents → 400 for non-submitter role."""
+    user = await make_user(role="admin", status="active")
+    headers = auth_headers(user)
+
+    files = {
+        "id_document": ("id.png", io.BytesIO(b"data"), "image/png"),
+        "selfie": ("selfie.png", io.BytesIO(b"data"), "image/png"),
+    }
+    resp = await client.post(
+        "/api/v1/users/verification/documents",
+        headers=headers,
+        files=files,
+        data={"user_address": "123 Main St"},
+    )
     assert resp.status_code == 400
+
+
+async def test_admin_review_verification_via_admin_endpoint(
+    client: AsyncClient, make_user, auth_headers, db_session
+):
+    """POST /admin/verification-cases/{id}/review → review case via dedicated admin API."""
+    investor = await make_user(role="investor", status="active")
+    admin = await make_user(role="admin", status="active")
+
+    investor_headers = auth_headers(investor)
+    files = {
+        "id_document": ("id.png", io.BytesIO(b"data"), "image/png"),
+        "selfie": ("selfie.png", io.BytesIO(b"data"), "image/png"),
+    }
+    create_resp = await client.post(
+        "/api/v1/users/verification/documents",
+        headers=investor_headers,
+        files=files,
+        data={"user_address": "123 Main St"},
+    )
+    case_id = create_resp.json()["id"]
+
+    admin_headers = auth_headers(admin)
+    review_resp = await client.post(
+        f"/api/v1/admin/verification-cases/{case_id}/review",
+        headers=admin_headers,
+        json={"decision": "approved", "notes": "Investor KYS approved"},
+    )
+    assert review_resp.status_code == 200
+    payload = review_resp.json()
+    assert payload["status"] == VerificationStatus.approved.value
+    assert payload["reviewer_notes"] == "Investor KYS approved"
+    assert payload["user"]["role"] == UserRole.investor.value
+
+    await db_session.refresh(investor)
+    assert investor.status == UserStatus.active.value
 
 
 async def test_verification_status(client: AsyncClient, make_user, auth_headers, db_session):

@@ -34,9 +34,18 @@ class IpClaimService:
         return claim
 
     @staticmethod
-    async def list_claims(db: AsyncSession, status_filter: str | None, skip: int, limit: int):
+    async def list_claims(
+        db: AsyncSession,
+        status_filter: str | None,
+        skip: int,
+        limit: int,
+        issuer_user_id: uuid.UUID | None = None,
+    ):
         query = select(IpClaim)
         count_query = select(func.count()).select_from(IpClaim)
+        if issuer_user_id is not None:
+            query = query.where(IpClaim.issuer_user_id == issuer_user_id)
+            count_query = count_query.where(IpClaim.issuer_user_id == issuer_user_id)
         if status_filter:
             query = query.where(IpClaim.status == status_filter)
             count_query = count_query.where(IpClaim.status == status_filter)

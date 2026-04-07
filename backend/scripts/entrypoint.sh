@@ -37,7 +37,15 @@ run_migrations() {
   wait_for_database
   echo "Applying Alembic migrations..."
   alembic upgrade head
-  echo "Alembic migrations applied."
+  echo "Ensuring metadata-defined tables exist for local bootstrap..."
+  python - <<'PY'
+import asyncio
+
+from app.core.database import init_db
+
+asyncio.run(init_db())
+PY
+  echo "Database schema is ready."
 }
 
 case "${1:-}" in

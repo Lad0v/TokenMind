@@ -83,6 +83,17 @@ class Settings(BaseSettings):
     MINIO_BUCKET: str = "ip-documents"
     MINIO_USE_SSL: bool = False
 
+    # ======================================================================
+    # Solana / Blockchain Integration
+    # ======================================================================
+    ENABLE_BLOCKCHAIN: bool = True
+    SOLANA_NETWORK: str = "localnet"
+    SOLANA_RPC_URL: str = "http://host.docker.internal:8899"
+    SOLANA_COMMITMENT: str = "confirmed"
+    SOLANA_PROGRAM_ID: str = "4XeEJCxc1TLRaFzyfjYjELPdExY1imRAqiZqjuRqz6Kt"
+    SOLANA_PLATFORM_TREASURY: str = "11111111111111111111111111111111"
+    SOLANA_EXPLORER_BASE_URL: str = "https://explorer.solana.com"
+
     # вместо старого class Config:
     model_config = SettingsConfigDict(
         env_file=Path(__file__).resolve().parents[2] / ".env",

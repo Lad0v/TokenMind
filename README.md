@@ -101,6 +101,8 @@ TokenMind/
 
 - [Backend Architecture](backend/architecture.md)
 - [IP Intel Module](backend/IP_INTEL_MODULE.md)
+- [Blockchain Integration](BLOCKCHAIN_INTEGRATION.md)
+- [Integration Implementation Details](INTEGRATION_IMPLEMENTATION_DETAILS.md)
 
 ## 🛠️ Разработка
 

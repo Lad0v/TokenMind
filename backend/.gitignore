@@ -13,8 +13,8 @@ build/
 # Виртуальное окружение
 .venv/
 venv/
-env/
-ENV/
+.env/
+.env/
 
 # Env файлы
 .env

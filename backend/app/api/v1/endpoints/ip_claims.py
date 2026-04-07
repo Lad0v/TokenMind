@@ -35,10 +35,17 @@ async def list_ip_claims(
     status_filter: str | None = Query(None, alias="status"),
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
-    _: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    total, items = await IpClaimService.list_claims(db, status_filter, skip, limit)
+    issuer_user_id = None if current_user.role == "admin" else current_user.id
+    total, items = await IpClaimService.list_claims(
+        db,
+        status_filter,
+        skip,
+        limit,
+        issuer_user_id=issuer_user_id,
+    )
     return IpClaimListResponse(
         total=total,
         items=[IpClaimResponse.model_validate(item) for item in items],

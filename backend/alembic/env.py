@@ -16,6 +16,7 @@ import app.models.analytics  # noqa: F401
 import app.models.common   # noqa: F401
 import app.models.ip_claim   # noqa: F401
 import app.models.ip_intel   # noqa: F401
+import app.models.blockchain   # noqa: F401
 
 config = context.config
 database_url = settings.DATABASE_URL

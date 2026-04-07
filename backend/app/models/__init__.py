@@ -23,6 +23,16 @@ from app.models.ip_claim import (  # noqa: F401
     IpReviewDecision,
     TokenRevocation,
 )
+from app.models.blockchain import (  # noqa: F401
+    AssetListing,
+    BlockchainOperation,
+    BlockchainSyncStatus,
+    BlockchainTransaction,
+    BlockchainTxStatus,
+    ListingStatus,
+    TokenizedAsset,
+    TokenizedAssetStatus,
+)
 
 __all__ = [
     # Users domain
@@ -44,4 +54,13 @@ __all__ = [
     "IpClaimStatus",
     "IpReviewDecision",
     "TokenRevocation",
+    # Blockchain mirror
+    "TokenizedAsset",
+    "AssetListing",
+    "BlockchainTransaction",
+    "TokenizedAssetStatus",
+    "ListingStatus",
+    "BlockchainSyncStatus",
+    "BlockchainTxStatus",
+    "BlockchainOperation",
 ]

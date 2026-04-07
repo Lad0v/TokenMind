@@ -7,6 +7,7 @@ from app.api.v1.endpoints import patents
 from app.api.v1.endpoints import users
 from app.api.v1.endpoints import admin_users
 from app.api.v1.endpoints import admin_patents
+from app.api.v1.endpoints import blockchain
 
 router = APIRouter()
 
@@ -21,6 +22,7 @@ router.include_router(users.router, prefix="/users", tags=["Users"])
 router.include_router(patents.router, prefix="/ip", tags=["IP Check"])
 router.include_router(ip_claims.router, prefix="/ip-claims", tags=["IP Claims"])
 router.include_router(ip_intel.router, prefix="/patents", tags=["IP Intelligence"])
+router.include_router(blockchain.router, prefix="/blockchain", tags=["Blockchain"])
 
 # Admin endpoints
 router.include_router(admin_users.router, prefix="/users", tags=["admin-users"])

@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info
+dist/
+build/
+
+# Virtual environments
+.env
+.venv/
+env/
+venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Docker metadata
+Dockerfile
+docker-compose.yml
+docker-compose.override.yml
+.dockerignore
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Local runtime artifacts
+uploads/
+
+# Documentation
+*.md
+!requirements.txt
+
+# Utility scripts not needed in image
+test_*.sh
+test_*.ps1
+seed_*.py
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local tool state
+.qwen/

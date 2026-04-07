@@ -1,0 +1,48 @@
+# ======================================================================
+# TokenMind Development Override
+# ======================================================================
+
+services:
+  # --- Backend: hot reload on top of the same infrastructure stack ---
+  api:
+    build:
+      target: development
+    volumes:
+      - ./backend:/app
+      - backend-uploads:/app/uploads
+      - /app/.venv
+      - /app/__pycache__
+      - /app/.pytest_cache
+    environment:
+      DEBUG: "True"
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --reload
+      - --log-level
+      - debug
+
+  # --- Frontend: optional dev profile with hot reload ---
+  frontend:
+    build:
+      target: development
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    environment:
+      NODE_ENV: development
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    command:
+      - npm
+      - run
+      - dev
+      - --
+      - --hostname
+      - 0.0.0.0
+      - --port
+      - "3000"

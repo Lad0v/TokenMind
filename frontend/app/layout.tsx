@@ -1,0 +1,42 @@
+import type { Metadata } from 'next'
+import { Analytics } from '@vercel/analytics/next'
+import { AppProviders } from '@/components/providers/app-providers'
+import './globals.css'
+
+export const metadata: Metadata = {
+  title: 'VeriMint — Токенизация IP-активов на Solana',
+  description: 'Веб-платформа для верификации правообладателей, токенизации IP-активов и их размещения на маркетплейсе с расчётами в Solana.',
+  generator: 'VeriMint',
+  icons: {
+    icon: [
+      {
+        url: '/icon-light-32x32.png',
+        media: '(prefers-color-scheme: light)',
+      },
+      {
+        url: '/icon-dark-32x32.png',
+        media: '(prefers-color-scheme: dark)',
+      },
+      {
+        url: '/icon.svg',
+        type: 'image/svg+xml',
+      },
+    ],
+    apple: '/apple-icon.png',
+  },
+}
+
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode
+}>) {
+  return (
+    <html lang="ru" suppressHydrationWarning>
+      <body className="font-sans antialiased" suppressHydrationWarning>
+        <AppProviders>{children}</AppProviders>
+        <Analytics />
+      </body>
+    </html>
+  )
+}

@@ -58,6 +58,33 @@ class ProfileUpdate(BaseModel):
         return normalized
 
 
+class WalletLinkCreate(BaseModel):
+    wallet_address: str
+    network: str = "solana-devnet"
+    is_primary: bool = True
+
+    @field_validator("wallet_address")
+    @classmethod
+    def normalise_wallet_address(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("network")
+    @classmethod
+    def normalise_network(cls, value: str) -> str:
+        return value.strip().lower()
+
+
+class WalletLinkRead(BaseModel):
+    id: uuid.UUID
+    wallet_address: str
+    network: str
+    is_primary: bool
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class VerificationCaseRead(BaseModel):
     id: uuid.UUID
     user_id: uuid.UUID

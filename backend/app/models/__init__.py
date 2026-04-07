@@ -23,6 +23,18 @@ from app.models.ip_claim import (  # noqa: F401
     IpReviewDecision,
     TokenRevocation,
 )
+from app.models.ip_intel import (  # noqa: F401
+    PatentCache,
+    PatentSearchCache,
+    PatentCacheSource,
+    PatentCacheStatus,
+)
+from app.models.marketplace import (  # noqa: F401
+    MarketplaceListing,
+    MarketplacePurchase,
+    MarketplaceListingStatus,
+    MarketplacePurchaseStatus,
+)
 
 __all__ = [
     # Users domain
@@ -44,4 +56,14 @@ __all__ = [
     "IpClaimStatus",
     "IpReviewDecision",
     "TokenRevocation",
+    # IP intelligence domain
+    "PatentCache",
+    "PatentSearchCache",
+    "PatentCacheSource",
+    "PatentCacheStatus",
+    # Marketplace domain
+    "MarketplaceListing",
+    "MarketplacePurchase",
+    "MarketplaceListingStatus",
+    "MarketplacePurchaseStatus",
 ]

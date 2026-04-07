@@ -154,6 +154,26 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class WalletChallengeRequest(BaseModel):
+    wallet_address: str
+    network: str = "solana-devnet"
+
+
+class WalletChallengeResponse(BaseModel):
+    wallet_address: str
+    network: str
+    message: str
+    challenge_token: str
+
+
+class WalletLoginVerifyRequest(BaseModel):
+    wallet_address: str
+    network: str = "solana-devnet"
+    message: str
+    signature: str
+    challenge_token: str
+
+
 class PasswordResetRequest(BaseModel):
     email: EmailStr
     new_password: str = Field(min_length=8, max_length=128)

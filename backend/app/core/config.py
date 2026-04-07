@@ -22,7 +22,14 @@ class Settings(BaseSettings):
 
     # CORS Settings
     ENABLE_CORS: bool = True
-    ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:8000"]
+    ALLOWED_ORIGINS: List[str] = [
+        "http://localhost:3000",
+        "http://localhost:8000",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:8000",
+        "http://[::1]:3000",
+        "http://[::1]:8000",
+    ]
 
     DEBUG: bool = False
 
@@ -47,6 +54,14 @@ class Settings(BaseSettings):
     # Set to empty string or omit to disable Redis
     REDIS_URL: Optional[str] = None
     ENABLE_REDIS: bool = True  # Set to False to disable Redis completely
+
+    # ======================================================================
+    # Marketplace / Solana Settlement
+    # ======================================================================
+
+    SOLANA_RPC_URL: str = "https://api.devnet.solana.com"
+    MARKETPLACE_NETWORK: str = "solana-devnet"
+    MARKETPLACE_TREASURY_WALLET: str = "9xQeWvG816bUx9EPfEZj3J2m55Cmw7oQwWJ4y9ZVJvUh"
 
     # Cache TTL for patent data (hours)
     PATENT_CACHE_TTL_HOURS: int = 48

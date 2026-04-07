@@ -31,6 +31,8 @@ class CreateIpClaimRequest(BaseModel):
 class IpClaimResponse(BaseModel):
     id: uuid.UUID
     issuer_user_id: uuid.UUID
+    issuer_email: Optional[str] = None
+    issuer_name: Optional[str] = None
     patent_number: str
     patent_title: Optional[str]
     claimed_owner_name: str
@@ -42,8 +44,11 @@ class IpClaimResponse(BaseModel):
     source_id: Optional[str]
     checked_at: Optional[datetime]
     patent_metadata: Optional[dict[str, Any]]
+    external_metadata: Optional[dict[str, Any]] = None
     created_at: datetime
     updated_at: datetime
+    documents: list["IpClaimDocumentRead"] = []
+    reviews: list["IpClaimReviewRead"] = []
 
     model_config = {"from_attributes": True}
 
@@ -64,5 +69,27 @@ class UploadDocumentResponse(BaseModel):
     file_url: str
     doc_type: Optional[str]
     uploaded_at: datetime
+    created_by_user_id: Optional[uuid.UUID] = None
+
+    model_config = {"from_attributes": True}
+
+
+class IpClaimDocumentRead(BaseModel):
+    id: uuid.UUID
+    file_url: str
+    doc_type: Optional[str]
+    uploaded_at: datetime
+    created_by_user_id: Optional[uuid.UUID] = None
+
+    model_config = {"from_attributes": True}
+
+
+class IpClaimReviewRead(BaseModel):
+    id: uuid.UUID
+    reviewer_id: Optional[uuid.UUID] = None
+    reviewer_email: Optional[str] = None
+    decision: IpReviewDecision
+    notes: Optional[str] = None
+    created_at: datetime
 
     model_config = {"from_attributes": True}

@@ -10,16 +10,19 @@ Provides:
 import logging
 from contextlib import asynccontextmanager
 from collections.abc import AsyncGenerator
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.config import settings
 from app.core.database import engine, close_redis, init_db
 from app.api.v1.router import router as api_v1_router
+import app.models  # noqa: F401  # Ensure all ORM mappers are registered at startup
 
 logger = logging.getLogger(__name__)
 
@@ -56,11 +59,16 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+uploads_dir = Path("uploads")
+uploads_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
+
 # --- Middleware ---
 if settings.ENABLE_CORS:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.ALLOWED_ORIGINS,
+        allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$",
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

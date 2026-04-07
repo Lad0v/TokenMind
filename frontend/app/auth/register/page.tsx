@@ -1,37 +1,105 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Checkbox } from "@/components/ui/checkbox"
 import { IPChainLogo } from "@/components/ipchain-logo"
-import { Loader2, Wallet, Eye, EyeOff } from "lucide-react"
+import { Loader2, Wallet, AlertCircle, CheckCircle } from "lucide-react"
+import { useWallet } from "@/hooks/use-wallet"
+import { useRegister } from "@/hooks/use-api"
+import { useAuth } from "@/lib/auth-context"
+import { getUserFriendlyErrorMessage } from "@/lib/error-handler"
 
 export default function RegisterPage() {
-  const [isLoading, setIsLoading] = useState(false)
-  const [showPassword, setShowPassword] = useState(false)
+  const router = useRouter()
+  const { isAuthenticated } = useAuth()
+  const { walletAddress, isLoading: walletLoading, isAvailable, error: walletError, connect } = useWallet()
+  const { execute: register, loading: registerLoading, error: registerError } = useRegister()
+
   const [formData, setFormData] = useState({
-    fullName: "",
     email: "",
-    password: "",
-    acceptTerms: false
+    legalName: "",
   })
+
+  const [registrationSuccess, setRegistrationSuccess] = useState(false)
+
+  // Redirect if already logged in
+  useEffect(() => {
+    if (isAuthenticated) {
+      router.push('/marketplace')
+    }
+  }, [isAuthenticated, router])
+
+  const handleWalletConnect = async () => {
+    try {
+      await connect()
+    } catch (err) {
+      console.error('Failed to connect wallet:', err)
+    }
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setIsLoading(true)
-    // Simulate registration
-    await new Promise(resolve => setTimeout(resolve, 1500))
-    setIsLoading(false)
+
+    if (!walletAddress) {
+      return
+    }
+
+    if (!formData.email) {
+      alert('Пожалуйста, введите email')
+      return
+    }
+
+    try {
+      await register({
+        email: formData.email,
+        solana_wallet_address: walletAddress,
+        legal_name: formData.legalName || undefined,
+      })
+
+      setRegistrationSuccess(true)
+
+      // Redirect to login after 2 seconds
+      setTimeout(() => {
+        router.push('/auth/login')
+      }, 2000)
+    } catch (err) {
+      console.error('Registration failed:', err)
+    }
   }
 
-  const handleWalletConnect = async () => {
-    setIsLoading(true)
-    // Simulate wallet connection
-    await new Promise(resolve => setTimeout(resolve, 1500))
-    setIsLoading(false)
+  const isLoading = walletLoading || registerLoading
+  const error = walletError || registerError
+  const errorMessage = error ? getUserFriendlyErrorMessage(error) : null
+
+  if (registrationSuccess) {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-4 py-12">
+        <div className="w-full max-w-md">
+          <div className="bg-card/50 border border-border rounded-2xl p-8 text-center">
+            <div className="flex justify-center mb-6">
+              <div className="w-16 h-16 rounded-full bg-green-500/10 border border-green-500/30 flex items-center justify-center">
+                <CheckCircle className="h-8 w-8 text-green-600" />
+              </div>
+            </div>
+
+            <h2 className="text-2xl font-bold text-foreground mb-2">Регистрация успешна!</h2>
+            <p className="text-muted-foreground mb-6">
+              Ваш аккаунт создан. Перенаправление на страницу входа...
+            </p>
+
+            <Link href="/auth/login">
+              <Button className="w-full bg-primary hover:bg-primary/90 text-primary-foreground">
+                Перейти на страницу входа
+              </Button>
+            </Link>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -41,7 +109,7 @@ export default function RegisterPage() {
         <div className="flex justify-center mb-8">
           <IPChainLogo size="lg" showText />
         </div>
-        
+
         <div className="bg-card/50 border border-border rounded-2xl p-8">
           <div className="mb-8 text-center">
             <h1 className="text-2xl font-bold text-foreground mb-2">Создать аккаунт</h1>
@@ -50,129 +118,110 @@ export default function RegisterPage() {
             </p>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-5">
-            <div className="space-y-2">
-              <Label htmlFor="fullName" className="text-xs uppercase tracking-wider text-muted-foreground">
-                Полное имя
-              </Label>
-              <Input
-                id="fullName"
-                type="text"
-                value={formData.fullName}
-                onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
-                className="h-12 bg-card border-border focus:border-primary focus:ring-primary/20"
-                placeholder="Иван Иванов"
-              />
+          {/* Error Message */}
+          {errorMessage && (
+            <div className="mb-6 p-4 rounded-lg border border-destructive/30 bg-destructive/5 flex items-start gap-3">
+              <AlertCircle className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5" />
+              <p className="text-sm text-destructive">{errorMessage}</p>
             </div>
+          )}
 
-            <div className="space-y-2">
-              <Label htmlFor="email" className="text-xs uppercase tracking-wider text-muted-foreground">
-                Email
-              </Label>
-              <Input
-                id="email"
-                type="email"
-                value={formData.email}
-                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                className="h-12 bg-card border-border focus:border-primary focus:ring-primary/20"
-                placeholder="email@example.com"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="password" className="text-xs uppercase tracking-wider text-muted-foreground">
-                Пароль
-              </Label>
-              <div className="relative">
-                <Input
-                  id="password"
-                  type={showPassword ? "text" : "password"}
-                  value={formData.password}
-                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                  className="h-12 bg-card border-border focus:border-primary focus:ring-primary/20 pr-12"
-                  placeholder="••••••••"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-                </button>
+          {/* Wallet Not Available Warning */}
+          {!isAvailable && (
+            <div className="mb-6 p-4 rounded-lg border border-yellow-500/30 bg-yellow-500/5 flex items-start gap-3">
+              <AlertCircle className="h-5 w-5 text-yellow-600 flex-shrink-0 mt-0.5" />
+              <div className="text-sm text-yellow-600">
+                <p className="font-medium mb-1">Phantom wallet не найден</p>
+                <p className="text-xs text-yellow-600/80">
+                  Пожалуйста,{" "}
+                  <a
+                    href="https://phantom.app"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline hover:text-yellow-700"
+                  >
+                    установите Phantom
+                  </a>
+                </p>
               </div>
             </div>
+          )}
 
-            <div className="flex items-start gap-3">
-              <Checkbox
-                id="terms"
-                checked={formData.acceptTerms}
-                onCheckedChange={(checked) => 
-                  setFormData({ ...formData, acceptTerms: checked as boolean })
-                }
-                className="mt-1 border-border data-[state=checked]:bg-primary data-[state=checked]:border-primary"
-              />
-              <Label htmlFor="terms" className="text-sm text-muted-foreground leading-relaxed cursor-pointer">
-                Регистрируясь, вы подтверждаете согласие с правилами платформы и можете сразу перейти в{" "}
-                <Link href="/marketplace" className="text-primary hover:underline">
-                  маркетплейс
-                </Link>{" "}
-                или{" "}
-                <Link href="/auth/login" className="text-primary hover:underline">
-                  войти в аккаунт
-                </Link>
-              </Label>
-            </div>
-
+          {!walletAddress ? (
             <Button
-              type="submit"
-              disabled={isLoading || !formData.acceptTerms}
-              className="w-full h-12 bg-primary hover:bg-primary/90 text-primary-foreground font-medium text-sm uppercase tracking-wider"
+              onClick={handleWalletConnect}
+              disabled={isLoading || !isAvailable}
+              className="w-full h-12 bg-primary hover:bg-primary/90 text-primary-foreground font-medium text-sm uppercase tracking-wider flex items-center justify-center gap-2 mb-6"
             >
               {isLoading ? (
                 <Loader2 className="h-5 w-5 animate-spin" />
               ) : (
-                "Зарегистрироваться"
+                <Wallet className="h-5 w-5" />
               )}
+              {isLoading ? "Подключение..." : "Подключить кошелек"}
             </Button>
-          </form>
+          ) : (
+            <>
+              <div className="p-4 rounded-lg border border-border bg-card mb-6">
+                <p className="text-xs text-muted-foreground mb-2">Подключённый кошелек:</p>
+                <p className="text-sm font-mono text-foreground break-all">{walletAddress}</p>
+                <Button
+                  onClick={handleWalletConnect}
+                  variant="ghost"
+                  size="sm"
+                  className="mt-3 h-8 text-xs"
+                  disabled={isLoading}
+                >
+                  Изменить кошелек
+                </Button>
+              </div>
 
-          <div className="relative my-8">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-border" />
-            </div>
-            <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-background px-4 text-muted-foreground">или</span>
-            </div>
-          </div>
+              <form onSubmit={handleSubmit} className="space-y-5">
+                <div className="space-y-2">
+                  <Label htmlFor="email" className="text-xs uppercase tracking-wider text-muted-foreground">
+                    Email <span className="text-destructive">*</span>
+                  </Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    value={formData.email}
+                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                    className="h-12 bg-card border-border focus:border-primary focus:ring-primary/20"
+                    placeholder="your@email.com"
+                    required
+                    disabled={isLoading}
+                  />
+                </div>
 
-          <div className="space-y-3">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={handleWalletConnect}
-              disabled={isLoading}
-              className="w-full h-12 border-border hover:border-primary/50 hover:bg-card/50 transition-all"
-            >
-              <svg className="h-5 w-5 mr-3" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-                <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-                <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
-                <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-              </svg>
-              Google
-            </Button>
+                <div className="space-y-2">
+                  <Label htmlFor="legalName" className="text-xs uppercase tracking-wider text-muted-foreground">
+                    Полное имя / Название организации
+                  </Label>
+                  <Input
+                    id="legalName"
+                    type="text"
+                    value={formData.legalName}
+                    onChange={(e) => setFormData({ ...formData, legalName: e.target.value })}
+                    className="h-12 bg-card border-border focus:border-primary focus:ring-primary/20"
+                    placeholder="Иван Иванов или ООО Компания"
+                    disabled={isLoading}
+                  />
+                </div>
 
-            <Button
-              type="button"
-              variant="outline"
-              onClick={handleWalletConnect}
-              disabled={isLoading}
-              className="w-full h-12 border-border hover:border-primary/50 hover:bg-card/50 transition-all"
-            >
-              <Wallet className="h-5 w-5 mr-3" />
-              Solana Wallet
-            </Button>
-          </div>
+                <Button
+                  type="submit"
+                  disabled={isLoading || !formData.email}
+                  className="w-full h-12 bg-primary hover:bg-primary/90 text-primary-foreground font-medium text-sm uppercase tracking-wider"
+                >
+                  {isLoading ? (
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                  ) : (
+                    "Зарегистрироваться"
+                  )}
+                </Button>
+              </form>
+            </>
+          )}
 
           <p className="mt-6 text-center text-sm text-muted-foreground">
             Уже есть аккаунт?{" "}

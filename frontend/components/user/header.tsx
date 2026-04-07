@@ -41,6 +41,17 @@ export function Header(){
                     >
                         Маркетплейс
                     </Link>
+
+                    <Link
+                        href="/investor"
+                        className={`text-sm transition-colors ${
+                            pathname === "/investor"
+                                ? "text-foreground font-medium"
+                                : "text-muted-foreground hover:text-foreground"
+                        }`}
+                    >
+                        Инвестор
+                    </Link>
                 </nav>
 
                 {/* Desktop Auth Buttons */}

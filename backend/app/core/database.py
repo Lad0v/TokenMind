@@ -10,6 +10,7 @@ Provides:
 from typing import AsyncGenerator, Optional
 
 import redis.asyncio as aioredis
+
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -100,6 +101,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             raise
         finally:
             await session.close()
+
 
 
 async def init_db() -> None:

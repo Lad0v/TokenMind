@@ -5,7 +5,7 @@ from typing import Optional, List, TYPE_CHECKING
 
 from sqlalchemy import (
     String, Boolean, DateTime, ForeignKey,
-    Index, Text, UniqueConstraint, Enum as SAEnum, JSON,
+    Index, Text, UniqueConstraint, Enum as SAEnum, JSON, text,
 )
 from sqlalchemy import Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -223,7 +223,7 @@ class WalletLink(Base):
             "uix_wallet_links_user_network_primary",
             "user_id",
             "network",
-            postgresql_where="is_primary IS TRUE",
+            postgresql_where=text("is_primary IS TRUE"),
             unique=True,
         ),
     )

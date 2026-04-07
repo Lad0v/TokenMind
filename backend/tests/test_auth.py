@@ -126,6 +126,23 @@ async def test_register_invalid_wallet(client: AsyncClient):
     assert resp.status_code in (400, 422)
 
 
+async def test_register_invalid_country_returns_422(client: AsyncClient):
+    """POST /auth/register with invalid country code -> 422, not DB 500."""
+    resp = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "bad-country@example.com",
+            "solana_wallet_address": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRrJosgAsU",
+            "role": "investor",
+            "legal_name": "John Doe",
+            "country": "string",
+        },
+    )
+    assert resp.status_code == 422
+    data = resp.json()
+    assert data["error"] == "validation_error"
+
+
 # ---------------------------------------------------------------------------
 # 2. Wallet Login
 # ---------------------------------------------------------------------------

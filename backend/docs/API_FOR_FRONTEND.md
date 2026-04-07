@@ -1,6 +1,6 @@
 # API Reference — для Frontend-разработчиков
 
-> **Версия: v3.1 (06.04.2026 — Solana Wallet Required, Audit in IpClaimService.review)**
+> **Версия: v3.2 (07.04.2026 — country validation for register/profile/admin update)**
 > Base URL: `http://localhost:8000/api/v1`
 > Формат: JSON
 > Авторизация: Bearer-токен в заголовве `Authorization`
@@ -34,11 +34,12 @@
 3. Review claims        → POST /api/v1/ip-claims/{id}/review
 ```
 
-> **ВАЖНО (v3.1):**
+> **ВАЖНО (v3.2):**
 > - ✅ **Регистрация** требует `email` + `solana_wallet_address` (Solana). Пароль больше не нужен.
 > - ✅ **Логин** только через `POST /auth/login/wallet` (email/password удалён).
 > - ✅ **Подача патента** — endpoint `POST /auth/submit-patent` с OTP на email/phone.
 > - ✅ **Upgrade investor → issuer** происходит автоматически после OTP верификации патента.
+> - ✅ **`country` validation:** для registration/profile/admin update принимаются только ISO-коды длиной `2-3` буквы, например `US`, `GB`, `KZ`, `RUS`.
 > - ❌ **Удалены endpoints:** `/auth/register/wallet`, `/auth/login` (email/password), `/ip-claims` (POST).
 > - ❌ **Удалены endpoints кошельков:** `/users/wallets/*` (wallet-only управление удалено).
 > - **OTP delivery:** По умолчанию OTP приходит на **email** (SMTP). Для SMS: `ENABLE_SMS_OTP=True`.
@@ -63,6 +64,19 @@
 { "detail": "Описание ошибки" }
 ```
 
+Для `422 validation_error` ответ структурирован:
+```json
+{
+  "error": "validation_error",
+  "detail": [
+    {
+      "loc": ["body", "country"],
+      "msg": "String should have at most 3 characters"
+    }
+  ]
+}
+```
+
 ---
 
 ## 1. Auth — `/api/v1/auth`
@@ -78,7 +92,7 @@
 | `solana_wallet_address` | string | ✅ | Solana wallet (base58, 32-44 chars) |
 | `role` | string | ❌ | Всегда `investor` |
 | `legal_name` | string | ❌ | ФИО / название организации |
-| `country` | string | ❌ | Код страны: `US`, `RU`, `EP`... |
+| `country` | string | ❌ | ISO-код страны длиной `2-3` буквы: `US`, `GB`, `KZ`, `RUS` |
 
 Ответ (201):
 ```json
@@ -88,6 +102,7 @@
 ```
 
 > ⚠️ После регистрации нужно залогиниться через `/auth/login/wallet` чтобы получить токены.
+> ⚠️ Swagger placeholder `"country": "string"` невалиден и возвращает `422 validation_error`, а не `500`.
 
 ---
 
@@ -260,6 +275,8 @@
   "country": "US"
 }
 ```
+
+`country` должен быть ISO-кодом длиной `2-3` буквы. Примеры: `US`, `GB`, `KZ`, `RUS`.
 
 ---
 
@@ -506,7 +523,7 @@ Soft-delete: статус меняется на `blocked`.
 | Поле | Тип | Описание |
 |------|-----|----------|
 | `full_name` | string | |
-| `country` | string | |
+| `country` | string | ISO-код страны: `US`, `GB`, `KZ`, `RUS` |
 | `organization_name` | string | |
 | `preferred_language` | string | |
 | `role` | string | Смена роли (логируется) |

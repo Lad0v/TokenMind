@@ -1,6 +1,5 @@
-from pydantic import BaseModel, EmailStr, Field
-from typing import Literal, Optional
-import re
+from pydantic import BaseModel, EmailStr, Field, field_validator
+from typing import Literal
 
 from app.models.user import UserRole
 
@@ -18,8 +17,43 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     solana_wallet_address: str = Field(..., min_length=32, max_length=44)
     role: Literal["investor"] = "investor"  # Only investor allowed on register
-    legal_name: str | None = None
-    country: str | None = None
+    legal_name: str | None = Field(default=None, min_length=1, max_length=255)
+    country: str | None = Field(
+        default=None,
+        min_length=2,
+        max_length=3,
+        description="ISO country code (2-3 letters), e.g. US or GBR",
+        examples=["US"],
+    )
+
+    @field_validator("legal_name")
+    @classmethod
+    def normalize_legal_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip()
+
+    @field_validator("country")
+    @classmethod
+    def normalize_country(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().upper()
+        if not normalized.isalpha() or len(normalized) not in {2, 3}:
+            raise ValueError("Country must be a 2-3 letter ISO country code")
+        return normalized
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "email": "user@example.com",
+                "solana_wallet_address": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRrJosgAsU",
+                "role": "investor",
+                "legal_name": "Jane Doe",
+                "country": "US",
+            }
+        }
+    }
 
 
 class RegisterResponse(BaseModel):

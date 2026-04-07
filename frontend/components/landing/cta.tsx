@@ -24,9 +24,9 @@ export function CTA() {
             </Link>
           </Button>
           <Button size="lg" variant="outline" className="h-14 px-8 text-base font-medium" asChild>
-            <Link href="/auth/wallet">
+            <Link href="/auth/register">
               <Wallet className="mr-2 h-5 w-5" />
-              Войти через кошелёк
+              Подключить Phantom
             </Link>
           </Button>
         </div>

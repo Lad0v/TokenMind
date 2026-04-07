@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation'
 
 export default function InvestorPage() {
-  redirect('/investor/portfolio')
+  redirect('/marketplace?tab=portfolio')
 }

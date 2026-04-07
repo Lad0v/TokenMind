@@ -516,16 +516,7 @@ async def read_current_user(
 
     verification_status = None
     if current_user.role in {UserRole.user, UserRole.issuer, UserRole.investor}:
-        from app.models.user import VerificationCase
-        from sqlalchemy import select
-
-        stmt = (
-            select(VerificationCase)
-            .where(VerificationCase.user_id == current_user.id)
-            .order_by(VerificationCase.created_at.desc())
-        )
-        result = await db.execute(stmt)
-        vc = result.scalar_one_or_none()
+        vc = await UserService.get_latest_verification_case(db, current_user.id)
         if vc:
             verification_status = vc.status
 

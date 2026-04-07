@@ -1,51 +1,124 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState, type FormEvent } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
+import { Loader2, Eye, EyeOff, ExternalLink, Wallet } from "lucide-react"
+
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { IPChainLogo } from "@/components/ipchain-logo"
-import { Loader2, Wallet, Eye, EyeOff } from "lucide-react"
-import {redirect} from "next/navigation";
+import { ApiError, authApi, getDefaultRouteForRole } from "@/lib/api"
+import { useSession } from "@/components/providers/session-provider"
+import { useWallet } from "@/components/providers/wallet-provider"
+import { formatWalletAddress, signPhantomMessage } from "@/lib/phantom"
 
 export default function LoginPage() {
+  const router = useRouter()
+  const { status, user, login, loginWithWallet } = useSession()
+  const { providerStatus, connectedAddress, connect, isConnecting } = useWallet()
+
   const [isLoading, setIsLoading] = useState(false)
+  const [isWalletLoading, setIsWalletLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [formData, setFormData] = useState({
     email: "",
-    password: ""
+    password: "",
   })
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setIsLoading(true)
-    await new Promise(resolve => setTimeout(resolve, 1500))
-    setIsLoading(false)
+  const isWalletDisabled = isLoading || isWalletLoading || isConnecting || providerStatus === "checking"
 
+  const getWalletLoginError = (caughtError: unknown) => {
+    if (caughtError instanceof ApiError) {
+      if (caughtError.status === 404) {
+        return "Этот Phantom кошелек еще не привязан к аккаунту. Зарегистрируйтесь как investor или привяжите wallet в профиле."
+      }
 
-    redirect("/marketplace")
+      return caughtError.message
+    }
+
+    if (caughtError instanceof Error) {
+      return caughtError.message
+    }
+
+    return "Не удалось выполнить вход через Phantom."
   }
 
-  const handleWalletConnect = async () => {
+  useEffect(() => {
+    if (status === "authenticated" && user) {
+      router.replace(getDefaultRouteForRole(user.role))
+    }
+  }, [router, status, user])
+
+  const handleSubmit = async (event: FormEvent) => {
+    event.preventDefault()
+    setError(null)
     setIsLoading(true)
-    await new Promise(resolve => setTimeout(resolve, 1500))
-    setIsLoading(false)
+
+    try {
+      const currentUser = await login(formData)
+      router.replace(getDefaultRouteForRole(currentUser.role))
+    } catch (caughtError) {
+      if (caughtError instanceof ApiError) {
+        setError(caughtError.message)
+      } else if (caughtError instanceof Error) {
+        setError(caughtError.message)
+      } else {
+        setError("Не удалось выполнить вход.")
+      }
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleWalletLogin = async () => {
+    setError(null)
+    setIsWalletLoading(true)
+
+    try {
+      const walletAddress = connectedAddress ?? await connect()
+      if (!walletAddress) {
+        throw new Error("Не удалось получить адрес Phantom кошелька.")
+      }
+
+      const challenge = await authApi.createWalletLoginChallenge({
+        wallet_address: walletAddress,
+        network: "solana-devnet",
+      })
+      const signedMessage = await signPhantomMessage(challenge.message)
+      if (signedMessage.walletAddress !== walletAddress) {
+        throw new Error("Phantom подписал challenge другим кошельком. Переключите аккаунт и попробуйте снова.")
+      }
+
+      const currentUser = await loginWithWallet({
+        wallet_address: walletAddress,
+        network: challenge.network,
+        message: challenge.message,
+        signature: signedMessage.signature,
+        challenge_token: challenge.challenge_token,
+      })
+      router.replace(getDefaultRouteForRole(currentUser.role))
+    } catch (caughtError) {
+      setError(getWalletLoginError(caughtError))
+    } finally {
+      setIsWalletLoading(false)
+    }
   }
 
   return (
     <div className="min-h-screen flex items-center justify-center px-4 py-12">
       <div className="w-full max-w-md">
-        {/* Logo */}
         <div className="flex justify-center mb-8">
           <IPChainLogo size="lg" showText />
         </div>
-        
+
         <div className="bg-card/50 border border-border rounded-2xl p-8">
           <div className="mb-8 text-center">
             <h1 className="text-2xl font-bold text-foreground mb-2">Войти в аккаунт</h1>
             <p className="text-muted-foreground text-sm">
-              Добро пожаловать в IPChain
+              Авторизация через реальный backend API
             </p>
           </div>
 
@@ -58,9 +131,11 @@ export default function LoginPage() {
                 id="email"
                 type="email"
                 value={formData.email}
-                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                onChange={(event) => setFormData((current) => ({ ...current, email: event.target.value }))}
                 className="h-12 bg-card border-border focus:border-primary focus:ring-primary/20"
                 placeholder="email@example.com"
+                autoComplete="email"
+                required
               />
             </div>
 
@@ -78,70 +153,103 @@ export default function LoginPage() {
                   id="password"
                   type={showPassword ? "text" : "password"}
                   value={formData.password}
-                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                  onChange={(event) => setFormData((current) => ({ ...current, password: event.target.value }))}
                   className="h-12 bg-card border-border focus:border-primary focus:ring-primary/20 pr-12"
                   placeholder="••••••••"
+                  autoComplete="current-password"
+                  required
                 />
-                <button
+                <Button
                   type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={showPassword ? "Скрыть пароль" : "Показать пароль"}
+                  aria-pressed={showPassword}
+                  onClick={() => setShowPassword((current) => !current)}
+                  className="absolute right-2 top-1/2 z-10 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                 >
                   {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-                </button>
+                </Button>
               </div>
             </div>
 
+            {error && (
+              <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                {error}
+              </div>
+            )}
+
             <Button
               type="submit"
-              disabled={isLoading}
+              disabled={isLoading || isWalletLoading}
               className="w-full h-12 bg-primary hover:bg-primary/90 text-primary-foreground font-medium text-sm uppercase tracking-wider"
             >
-              {isLoading ? (
-                <Loader2 className="h-5 w-5 animate-spin" />
-              ) : (
-                "Войти"
-              )}
+              {isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : "Войти"}
             </Button>
+
+            <div className="relative py-1">
+              <div className="border-t border-border" />
+              <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-card px-3 text-xs uppercase tracking-[0.24em] text-muted-foreground">
+                или
+              </span>
+            </div>
+
+            <div className="rounded-xl border border-border bg-background/40 p-4 space-y-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-foreground">Phantom Wallet</p>
+                  <p className="text-xs text-muted-foreground">
+                    Вход доступен для кошелька, который уже привязан к вашему аккаунту investor.
+                  </p>
+                </div>
+                {providerStatus === "unsupported" && (
+                  <a
+                    href="https://phantom.app/"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                  >
+                    Установить Phantom
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </a>
+                )}
+              </div>
+
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isWalletDisabled || providerStatus === "unsupported"}
+                onClick={() => {
+                  void handleWalletLogin()
+                }}
+                className="w-full h-12 border-primary/40 bg-card text-foreground hover:border-primary hover:bg-primary/10"
+              >
+                {isWalletLoading || isConnecting ? (
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                ) : providerStatus === "checking" ? (
+                  "Проверяем Phantom..."
+                ) : (
+                  <>
+                    <Wallet className="mr-2 h-5 w-5" />
+                    Войти через Phantom
+                  </>
+                )}
+              </Button>
+
+              <div className="rounded-lg border border-border/70 bg-card/40 px-3 py-2 text-xs text-muted-foreground">
+                <div>
+                  Provider:{" "}
+                  {providerStatus === "ready"
+                    ? "Phantom detected"
+                    : providerStatus === "checking"
+                      ? "Checking..."
+                      : "Phantom not found"}
+                </div>
+                <div>Connected wallet: {formatWalletAddress(connectedAddress)}</div>
+                <div>Cluster: Solana Devnet</div>
+              </div>
+            </div>
           </form>
-
-          <div className="relative my-8">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-border" />
-            </div>
-            <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-background px-4 text-muted-foreground">или</span>
-            </div>
-          </div>
-
-          <div className="space-y-3">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={handleWalletConnect}
-              disabled={isLoading}
-              className="w-full h-12 border-border hover:border-primary/50 hover:bg-card/50 transition-all"
-            >
-              <svg className="h-5 w-5 mr-3" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-                <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-                <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
-                <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-              </svg>
-              Google
-            </Button>
-
-            <Button
-              type="button"
-              variant="outline"
-              onClick={handleWalletConnect}
-              disabled={isLoading}
-              className="w-full h-12 border-border hover:border-primary/50 hover:bg-card/50 transition-all"
-            >
-              <Wallet className="h-5 w-5 mr-3" />
-              Solana Wallet
-            </Button>
-          </div>
 
           <p className="mt-6 text-center text-sm text-muted-foreground">
             Нет аккаунта?{" "}

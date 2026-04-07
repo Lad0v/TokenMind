@@ -2,17 +2,15 @@
 
 import * as React from "react"
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import {
   LayoutDashboard,
   UserCheck,
   FileCheck2,
   Coins,
   ScrollText,
-  Shield,
   LogOut,
   ChevronLeft,
-  Menu,
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -33,6 +31,8 @@ import {
   SidebarInset,
 } from "@/components/ui/sidebar"
 import {IPChainLogo} from "@/components/ipchain-logo";
+import { getDefaultRouteForRole } from "@/lib/api";
+import { useSession } from "@/components/providers/session-provider";
 
 const adminNavItems = [
   {
@@ -139,6 +139,40 @@ export default function AdminLayout({
 }: {
   children: React.ReactNode
 }) {
+  const router = useRouter()
+  const { status, user, logout } = useSession()
+
+  React.useEffect(() => {
+    if (status === "unauthenticated") {
+      router.replace("/auth/login")
+      return
+    }
+
+    if (
+      status === "authenticated" &&
+      user &&
+      !["admin", "compliance_officer"].includes(user.role)
+    ) {
+      router.replace(getDefaultRouteForRole(user.role))
+    }
+  }, [router, status, user])
+
+  if (status === "loading" || (user && !["admin", "compliance_officer"].includes(user.role))) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background text-muted-foreground">
+        Loading admin workspace...
+      </div>
+    )
+  }
+
+  if (status === "unauthenticated" || !user) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background text-muted-foreground">
+        Redirecting to sign in...
+      </div>
+    )
+  }
+
   return (
     <SidebarProvider>
       <AdminSidebar />
@@ -148,9 +182,19 @@ export default function AdminLayout({
           <div className="flex-1" />
           <div className="flex items-center gap-2">
             <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-medium text-primary-foreground">
-              A
+              {(user.name?.[0] || user.email[0] || "A").toUpperCase()}
             </div>
-            <span className="text-sm font-medium">Admin</span>
+            <span className="text-sm font-medium">{user.name || user.email}</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={async () => {
+                await logout()
+                router.replace("/auth/login")
+              }}
+            >
+              <LogOut className="h-4 w-4" />
+            </Button>
           </div>
         </header>
         <main className="flex-1 p-6">{children}</main>

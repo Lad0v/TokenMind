@@ -75,6 +75,21 @@ async def test_update_profile_partial(client: AsyncClient, make_user, auth_heade
     assert data["country"] == "GB"
 
 
+async def test_update_profile_invalid_country_returns_422(client: AsyncClient, make_user, auth_headers):
+    """PUT /users/profile with invalid country code -> 422, not DB 500."""
+    user = await make_user(role="investor", status="active")
+    headers = auth_headers(user)
+
+    resp = await client.put(
+        "/api/v1/users/profile",
+        headers=headers,
+        json={"legal_name": "John Doe", "country": "string"},
+    )
+    assert resp.status_code == 422
+    data = resp.json()
+    assert data["error"] == "validation_error"
+
+
 async def test_profile_requires_auth(client: AsyncClient):
     """GET /users/profile → 401 without token."""
     resp = await client.get("/api/v1/users/profile")

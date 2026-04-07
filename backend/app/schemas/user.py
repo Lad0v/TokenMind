@@ -1,5 +1,5 @@
 import uuid
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from datetime import datetime
 from typing import Optional
 
@@ -31,8 +31,31 @@ class ProfileRead(BaseModel):
 
 
 class ProfileUpdate(BaseModel):
-    legal_name: Optional[str] = None
-    country: Optional[str] = None
+    legal_name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    country: Optional[str] = Field(
+        default=None,
+        min_length=2,
+        max_length=3,
+        description="ISO country code (2-3 letters)",
+        examples=["US"],
+    )
+
+    @field_validator("legal_name")
+    @classmethod
+    def normalise_legal_name(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        return v.strip()
+
+    @field_validator("country")
+    @classmethod
+    def normalise_country(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        normalized = v.strip().upper()
+        if not normalized.isalpha() or len(normalized) not in {2, 3}:
+            raise ValueError("Country must be a 2-3 letter ISO country code")
+        return normalized
 
 
 class VerificationCaseRead(BaseModel):

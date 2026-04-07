@@ -53,7 +53,7 @@ make prod
 
 - **Frontend** (Next.js) - `http://localhost:3000`
 - **Backend API** (FastAPI) - `http://localhost:8000`
-- **PostgreSQL** - `localhost:5432`
+- **PostgreSQL** - `localhost:5480` (внутри Docker сети: `db:5432`)
 - **Redis** - `localhost:6379`
 - **MinIO** (S3 Storage) - `http://localhost:9000`
 - **MinIO Console** - `http://localhost:9001`

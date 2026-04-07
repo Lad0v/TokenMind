@@ -1,7 +1,11 @@
 from pathlib import Path
+from typing import List, Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import List, Optional
+
+
+ROOT_ENV_FILE = Path(__file__).resolve().parents[3] / ".env"
+BACKEND_ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 
 class Settings(BaseSettings):
@@ -98,11 +102,10 @@ class Settings(BaseSettings):
     MINIO_BUCKET: str = "ip-documents"
     MINIO_USE_SSL: bool = False
 
-    # вместо старого class Config:
     model_config = SettingsConfigDict(
-        env_file=Path(__file__).resolve().parents[2] / ".env",
+        env_file=(ROOT_ENV_FILE, BACKEND_ENV_FILE),
         case_sensitive=True,
-        extra="ignore"  # игнорировать лишние переменные из .env
+        extra="ignore"
     )
 
 

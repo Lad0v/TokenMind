@@ -32,6 +32,22 @@ def _make_reference_code() -> str:
     return f"TM-{uuid.uuid4().hex[:10].upper()}"
 
 
+def _is_compatible_network(wallet_network: str, listing_network: str) -> bool:
+    wallet = (wallet_network or "").strip().lower()
+    listing = (listing_network or "").strip().lower()
+
+    if wallet == listing:
+        return True
+
+    # Treat generic 'solana' as compatible with explicit clusters like 'solana-devnet'.
+    if wallet == "solana" and listing.startswith("solana"):
+        return True
+    if listing == "solana" and wallet.startswith("solana"):
+        return True
+
+    return False
+
+
 class MarketplaceService:
     @staticmethod
     async def release_expired_reservations(db: AsyncSession) -> int:
@@ -240,7 +256,7 @@ class MarketplaceService:
             raise HTTPException(status_code=400, detail="Listing is not active")
         if listing.available_tokens < quantity:
             raise HTTPException(status_code=400, detail="Not enough tokens available")
-        if listing.network != wallet_network:
+        if not _is_compatible_network(wallet_network, listing.network):
             raise HTTPException(status_code=400, detail="Linked wallet network does not match listing network")
 
         quoted_total_sol = float(listing.price_per_token_sol * quantity)

@@ -80,6 +80,24 @@ def test_send_email_otp_without_credentials():
         mock_server.sendmail.assert_called_once()
 
 
+def test_send_email_otp_logs_code_when_smtp_not_configured(caplog):
+    """Remote SMTP without credentials falls back to logging OTP in local mode."""
+    with patch("app.services.otp_sender.settings") as mock_settings, \
+         patch("app.services.otp_sender.smtplib.SMTP") as mock_smtp_class:
+
+        mock_settings.SMTP_HOST = "smtp.gmail.com"
+        mock_settings.SMTP_PORT = 587
+        mock_settings.SMTP_USER = ""
+        mock_settings.SMTP_PASSWORD = ""
+        mock_settings.SMTP_FROM_EMAIL = "noreply@tokenmind.local"
+
+        with caplog.at_level("WARNING"):
+            send_email_otp(VALID_EMAIL, VALID_CODE, VALID_PURPOSE)
+
+        mock_smtp_class.assert_not_called()
+        assert VALID_CODE in caplog.text
+
+
 # ---------------------------------------------------------------------------
 # 2. SMTP failures
 # ---------------------------------------------------------------------------
@@ -87,7 +105,13 @@ def test_send_email_otp_without_credentials():
 
 def test_send_email_otp_smtp_connection_error():
     """SMTP connection refused — RuntimeError raised."""
-    with patch("app.services.otp_sender.smtplib.SMTP") as mock_smtp_class:
+    with patch("app.services.otp_sender.settings") as mock_settings, \
+         patch("app.services.otp_sender.smtplib.SMTP") as mock_smtp_class:
+        mock_settings.SMTP_HOST = "smtp.gmail.com"
+        mock_settings.SMTP_PORT = 587
+        mock_settings.SMTP_USER = "test@gmail.com"
+        mock_settings.SMTP_PASSWORD = "password"
+        mock_settings.SMTP_FROM_EMAIL = "test@gmail.com"
         mock_smtp_class.side_effect = smtplib.SMTPConnectError(
             code=421, msg="Connection refused"
         )
@@ -118,7 +142,14 @@ def test_send_email_otp_smtp_authentication_error():
 
 def test_send_email_otp_general_smtp_exception():
     """Any unexpected SMTP error — RuntimeError raised."""
-    with patch("app.services.otp_sender.smtplib.SMTP") as mock_smtp_class:
+    with patch("app.services.otp_sender.settings") as mock_settings, \
+         patch("app.services.otp_sender.smtplib.SMTP") as mock_smtp_class:
+        mock_settings.SMTP_HOST = "smtp.gmail.com"
+        mock_settings.SMTP_PORT = 587
+        mock_settings.SMTP_USER = "test@gmail.com"
+        mock_settings.SMTP_PASSWORD = "password"
+        mock_settings.SMTP_FROM_EMAIL = "test@gmail.com"
+
         mock_server = MagicMock()
         mock_smtp_class.return_value.__enter__ = MagicMock(return_value=mock_server)
         mock_smtp_class.return_value.__exit__ = MagicMock(return_value=False)
@@ -132,7 +163,13 @@ def test_send_email_otp_general_smtp_exception():
 
 def test_send_email_otp_non_smtp_exception():
     """Non-SMTP exception (e.g. network error) — RuntimeError raised."""
-    with patch("app.services.otp_sender.smtplib.SMTP") as mock_smtp_class:
+    with patch("app.services.otp_sender.settings") as mock_settings, \
+         patch("app.services.otp_sender.smtplib.SMTP") as mock_smtp_class:
+        mock_settings.SMTP_HOST = "smtp.gmail.com"
+        mock_settings.SMTP_PORT = 587
+        mock_settings.SMTP_USER = "test@gmail.com"
+        mock_settings.SMTP_PASSWORD = "password"
+        mock_settings.SMTP_FROM_EMAIL = "test@gmail.com"
         mock_smtp_class.side_effect = OSError("Network unreachable")
 
         with pytest.raises(RuntimeError, match="EMAIL_SEND_FAILED"):

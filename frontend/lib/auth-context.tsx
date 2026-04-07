@@ -10,7 +10,7 @@ interface AuthContextType {
   isLoading: boolean;
   isAuthenticated: boolean;
   role: types.UserRole | null;
-  login: (walletAddress: string) => Promise<void>;
+  login: (walletAddress: string) => Promise<types.CurrentUserResponse>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
 }
@@ -53,6 +53,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await apiClient.loginWithWallet({ wallet_address: walletAddress });
       const currentUser = await apiClient.getCurrentUser();
       setUser(currentUser);
+      return currentUser;
     } finally {
       setIsLoading(false);
     }

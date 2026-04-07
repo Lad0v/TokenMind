@@ -59,13 +59,6 @@ async def submit_verification_documents(
     db: AsyncSession = Depends(get_db),
 ):
     """Step 2 — Document Collection: upload ID, selfie, optional video, and provide address."""
-    # Only issuers (patent submitters) can do verification
-    if current_user.role != "issuer":
-        raise HTTPException(
-            status_code=400,
-            detail="Верификация доступна только для patent submitter (issuer)",
-        )
-
     existing_vc = await UserService.get_latest_verification_case(db, current_user.id)
 
     if existing_vc and existing_vc.status in {

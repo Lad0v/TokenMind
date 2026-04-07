@@ -1,156 +1,94 @@
-# TokenMind - IP Tokenization Platform
+# TokenMind
 
-Полнофункциональная платформа для токенизации IP-активов на базе Next.js (frontend) и FastAPI (backend).
+TokenMind is a full-stack IP tokenization platform built with Next.js, FastAPI, PostgreSQL, Redis, MinIO, and Solana wallet authentication.
 
-## 🚀 Быстрый старт
+## Clone To Run
 
-### 1. Клонирование репозитория
+The repository now includes a safe local `.env`, so a fresh clone can be started without creating extra config files.
 
 ```bash
 git clone <repository-url>
-cd TokenMind
-```
-
-### 2. Настройка окружения
-
-```bash
-cp .env.example .env
-# Отредактируйте .env при необходимости
-```
-
-### 3. Запуск в development режиме
-
-```bash
+cd TokenMind-main
 make dev
-# или
-docker-compose up -d
 ```
 
-### 4. Запуск в production режиме
+If `make` is unavailable on Windows, run:
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.override.yml up -d --build
+```
+
+On the first start Docker will build the images, create PostgreSQL/Redis/MinIO volumes, and run Alembic migrations automatically.
+
+## What Judges Need
+
+- Docker Desktop with Compose v2
+- Phantom wallet extension
+- Phantom set to Solana `devnet`
+- Some devnet SOL in the connected wallet for on-chain actions
+
+## Main URLs
+
+- Frontend: `http://localhost:3000`
+- Backend API: `http://localhost:8000`
+- Backend health: `http://localhost:8000/health`
+- Swagger UI: `http://localhost:8000/docs`
+- MinIO API: `http://localhost:9000`
+- MinIO Console: `http://localhost:9001`
+
+## Judge Flow
+
+1. Open `http://localhost:3000`.
+2. Connect Phantom on Solana `devnet`.
+3. Register at `/auth/register` with email plus the connected wallet.
+4. Log in at `/auth/login` using the same wallet.
+5. Complete KYC/KYS at `/marketplace/kyc`.
+6. Explore the issuer workspace at `/issuer` and the marketplace at `/marketplace`.
+
+## OTP In Local Runs
+
+Issuer-related flows can request OTP delivery.
+
+- If SMTP credentials are configured, TokenMind sends a real email OTP.
+- If SMTP credentials are empty, the backend logs the OTP code instead of failing the flow.
+
+To see the OTP in local Docker mode:
 
 ```bash
-make prod
+docker compose -f docker-compose.yml -f docker-compose.override.yml logs -f api
 ```
 
-## 📋 Доступные команды
+## Commands
 
-| Команда | Описание |
-|---------|----------|
-| `make dev` | Запуск в режиме разработки (hot-reload) |
-| `make prod` | Запуск в production режиме |
-| `make build` | Сборка всех сервисов |
-| `make up` | Запуск всех сервисов |
-| `make down` | Остановка всех сервисов |
-| `make logs` | Просмотр логов |
-| `make ps` | Статус сервисов |
-| `make clean` | Удаление контейнеров и томов |
-| `make migrate` | Запуск миграций БД |
-| `make status` | Проверка здоровья сервисов |
+- `make dev` starts the full stack with hot reload.
+- `make prod` starts the production containers.
+- `make down` stops the stack.
+- `make clean` removes containers and volumes.
+- `make logs` tails development logs.
+- `make logs-api` tails backend logs.
+- `make ps` shows container status.
+- `make migrate` runs migrations manually.
+- `make status` checks core health endpoints.
 
-## 🏗️ Архитектура
+## Environment Notes
 
-### Сервисы
+- The committed root `.env` is intended only for local or hackathon use.
+- `.env.example` mirrors the same structure for teams that want their own local override.
+- Before any real deployment, replace the default secrets, passwords, and SMTP settings.
 
-- **Frontend** (Next.js) - `http://localhost:3000`
-- **Backend API** (FastAPI) - `http://localhost:8000`
-- **PostgreSQL** - `localhost:5432`
-- **Redis** - `localhost:6379`
-- **MinIO** (S3 Storage) - `http://localhost:9000`
-- **MinIO Console** - `http://localhost:9001`
+## Stack
 
-## 🔧 Технологии
+- Frontend: Next.js 16, React 19, TypeScript
+- Backend: FastAPI, SQLAlchemy, Alembic
+- Data layer: PostgreSQL 16, Redis 7, MinIO
+- Wallet/auth: Phantom wallet, Solana `devnet`
 
-### Frontend
-- Next.js 16
-- React 19
-- TypeScript
-- Tailwind CSS
-- Radix UI
+## Additional Docs
 
-### Backend
-- FastAPI
-- PostgreSQL 16
-- Redis 7
-- MinIO (S3-compatible storage)
-- Alembic (migrations)
+- [QUICKSTART.md](QUICKSTART.md)
+- [backend/architecture.md](backend/architecture.md)
+- [backend/IP_INTEL_MODULE.md](backend/IP_INTEL_MODULE.md)
 
-## 📝 Структура проекта
+## License
 
-```
-TokenMind/
-├── frontend/              # Next.js приложение
-│   ├── app/              # App Router
-│   ├── components/       # React компоненты
-│   ├── Dockerfile        # Docker конфигурация
-│   └── package.json
-├── backend/              # FastAPI приложение
-│   ├── app/             # Основной код
-│   ├── Dockerfile       # Docker конфигурация
-│   └── requirements.txt
-├── docker-compose.yml    # Основная конфигурация
-├── docker-compose.override.yml  # Development overrides
-├── .env.example          # Пример переменных окружения
-└── Makefile             # Команды управления
-```
-
-## 🔐 Безопасность
-
-Не забудьте изменить стандартные пароли в `.env` файле перед деплоем в production!
-
-## 📚 Документация
-
-- [Backend Architecture](backend/architecture.md)
-- [IP Intel Module](backend/IP_INTEL_MODULE.md)
-
-## 🛠️ Разработка
-
-### Локальная разработка (без Docker)
-
-**Frontend:**
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-**Backend:**
-```bash
-cd backend
-pip install -r requirements.txt
-uvicorn app.main:app --reload
-```
-
-## 🐳 Docker команды
-
-### Production запуск
-```bash
-docker-compose up -d
-```
-
-### Development запуск (с hot-reload)
-```bash
-TARGET=development docker-compose up -d
-```
-
-### Просмотр логов
-```bash
-docker-compose logs -f frontend
-docker-compose logs -f api
-```
-
-### Запуск миграций
-```bash
-docker-compose run --rm alembic alembic upgrade head
-```
-
-## 🤝 Contributing
-
-1. Fork репозиторий
-2. Создайте ветку (`git checkout -b feature/amazing-feature`)
-3. Commit изменения (`git commit -m 'Add amazing feature'`)
-4. Push в ветку (`git push origin feature/amazing-feature`)
-5. Откройте Pull Request
-
-## 📄 License
-
-Этот проект лицензирован под лицензией MIT - см. файл [LICENSE](LICENSE) для деталей.
+MIT. See [LICENSE](LICENSE).

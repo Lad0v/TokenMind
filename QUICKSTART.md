@@ -1,100 +1,93 @@
-# 🚀 TokenMind - Быстрый старт
+# TokenMind Quickstart
 
-## Предварительные требования
+## 1. Requirements
 
-- Docker Desktop установлен и запущен
-- Docker Compose v2 доступен
+- Docker Desktop running
+- Docker Compose v2
+- Phantom wallet browser extension
+- Phantom network set to Solana `devnet`
 
-## Запуск проекта
+## 2. Start The Stack
 
-### 1️⃣ Development режим (с hot-reload)
+Preferred development command:
 
 ```bash
-# Из корня проекта D:\TokenMind
 make dev
-
-# Или, если make недоступен:
-set TARGET=development
-docker-compose up -d
 ```
 
-### 2️⃣ Production режим
+Windows PowerShell alternative:
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.override.yml up -d --build
+```
+
+Production containers without hot reload:
 
 ```bash
-# Из корня проекта D:\TokenMind
 make prod
-
-# Или:
-docker-compose up -d
 ```
 
-### 3️⃣ Проверка статуса
+The repository already includes a local-safe root `.env`, so no extra copy step is required for the first launch.
+
+## 3. Verify Startup
 
 ```bash
 make status
-
-# Вручную:
-curl http://localhost:3000  # Frontend
-curl http://localhost:8000/health  # Backend API
 ```
 
-## 📍 Доступные сервисы
-
-| Сервис | URL | Описание |
-|--------|-----|----------|
-| Frontend | http://localhost:3000 | Next.js приложение |
-| Backend API | http://localhost:8000 | FastAPI + Swagger UI |
-| PostgreSQL | localhost:5432 | База данных |
-| Redis | localhost:6379 | Кэш |
-| MinIO API | http://localhost:9000 | S3-совместимое хранилище |
-| MinIO Console | http://localhost:9001 | Веб-интерфейс MinIO |
-
-## 🛠️ Полезные команды
+Manual checks:
 
 ```bash
-# Просмотр логов
-docker-compose logs -f frontend
-docker-compose logs -f api
-
-# Перезапуск сервисов
-docker-compose restart frontend
-docker-compose restart api
-
-# Остановка
-docker-compose down
-
-# Полная очистка
-docker-compose down -v
+curl http://localhost:3000
+curl http://localhost:8000/health
+curl http://localhost:8000/docs
 ```
 
-## ⚠️ Windows PowerShell
+## 4. First User Flow
 
-Для PowerShell используйте `$env:` вместо `set`:
+1. Open `http://localhost:3000`.
+2. Connect Phantom.
+3. Make sure Phantom is on Solana `devnet`.
+4. Register at `/auth/register`.
+5. Log in at `/auth/login`.
+6. Submit KYC/KYS at `/marketplace/kyc`.
 
-```powershell
-$env:TARGET="development"
-docker-compose up -d
-```
+## 5. Local OTP Behavior
 
-## 🔧 Troubleshooting
+Some issuer and patent-submission flows use OTP.
 
-**Frontend не собирается?**
+- With real SMTP credentials, the code is emailed.
+- Without SMTP credentials, the backend prints the OTP into the API logs.
+
+Watch the OTP log here:
+
 ```bash
-cd frontend
-npm install
-npm run build
-# Затем через Docker:
-docker-compose build frontend
+docker compose -f docker-compose.yml -f docker-compose.override.yml logs -f api
 ```
 
-**База данных не подключается?**
+## 6. Useful Commands
+
 ```bash
-# Проверьте логи
-docker-compose logs db
+make logs
+make logs-api
+make ps
+make down
+make clean
+make migrate
+```
 
-# Перезапустите БД
-docker-compose restart db
+## 7. Troubleshooting
 
-# Запустите миграции
-docker-compose run --rm alembic alembic upgrade head
+If the stack was started before these changes or the database schema looks stale, rebuild from scratch:
+
+```bash
+make clean
+make dev
+```
+
+If you need production-style logs instead of the dev override:
+
+```bash
+docker compose logs -f api
+docker compose logs -f frontend
 ```

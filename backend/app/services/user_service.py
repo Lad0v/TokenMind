@@ -316,6 +316,77 @@ class UserService:
     # -----------------------------------------------------------------------
 
     @staticmethod
+    async def list_verification_cases_admin(
+        db: AsyncSession,
+        skip: int = 0,
+        limit: int = 50,
+        status: Optional["VerificationStatus"] = None,
+        search: Optional[str] = None,
+    ) -> tuple[list["VerificationCase"], int]:
+        """List verification cases for admin queue with pagination and filters."""
+        from app.models.user import VerificationCase, VerificationStatus
+
+        base_query = (
+            select(VerificationCase)
+            .options(joinedload(VerificationCase.user).joinedload(User.profile))
+        )
+
+        filters = []
+        if status is not None:
+            status_value = status.value if isinstance(status, VerificationStatus) else str(status)
+            filters.append(VerificationCase.status == status_value)
+
+        if search:
+            search_term = f"%{search.lower().strip()}%"
+            filters.append(
+                or_(
+                    User.email.ilike(search_term),
+                    Profile.full_name.ilike(search_term),
+                )
+            )
+
+        if filters:
+            base_query = base_query.join(User, VerificationCase.user_id == User.id)
+            if search:
+                base_query = base_query.outerjoin(Profile, Profile.user_id == User.id)
+            base_query = base_query.where(*filters)
+
+        count_query = select(func.count()).select_from(VerificationCase)
+        if filters:
+            count_query = count_query.join(User, VerificationCase.user_id == User.id)
+            if search:
+                count_query = count_query.outerjoin(Profile, Profile.user_id == User.id)
+            count_query = count_query.where(*filters)
+
+        total_result = await db.execute(count_query)
+        total = total_result.scalar() or 0
+
+        result = await db.execute(
+            base_query
+            .order_by(VerificationCase.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+        )
+        cases = result.scalars().unique().all()
+        return list(cases), total
+
+    @staticmethod
+    async def get_verification_case_admin_detail(
+        db: AsyncSession,
+        case_id: uuid.UUID,
+    ) -> Optional["VerificationCase"]:
+        """Get a single verification case with user/profile for admin detail view."""
+        from app.models.user import VerificationCase
+
+        stmt = (
+            select(VerificationCase)
+            .where(VerificationCase.id == case_id)
+            .options(joinedload(VerificationCase.user).joinedload(User.profile))
+        )
+        result = await db.execute(stmt)
+        return result.scalars().unique().one_or_none()
+
+    @staticmethod
     async def list_users(
         db: AsyncSession,
         skip: int = 0,

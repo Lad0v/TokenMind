@@ -151,7 +151,7 @@ export default function MarketplaceKysStatusPage() {
           <Card className="mx-auto max-w-2xl">
             <CardHeader>
               <CardTitle>KYS статус доступен после входа</CardTitle>
-              <CardDescription>Войдите в investor-аккаунт, чтобы отслеживать проверку документов.</CardDescription>
+              <CardDescription>Войдите в аккаунт, чтобы отслеживать проверку документов.</CardDescription>
             </CardHeader>
             <CardContent className="flex gap-3">
               <Button asChild>
@@ -197,7 +197,7 @@ export default function MarketplaceKysStatusPage() {
                 {isLoading && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
               </CardTitle>
               <CardDescription>
-                Текущий KYS/KYC status для investor-покупок на маркетплейсе.
+                Текущий KYS/KYC status для вашего аккаунта и маркетплейс-доступа.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">

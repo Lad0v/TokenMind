@@ -10,8 +10,7 @@ import { TokenMindLogo } from "@/components/tokenmind-logo"
 import { useWallet } from "@/components/providers/wallet-provider"
 import { useAuth } from "@/lib/auth-context"
 import { getUserFriendlyErrorMessage } from "@/lib/error-handler"
-import { USER_ROLES } from "@/config/constants"
-import { apiClient } from "@/lib/api-client"
+import { getDefaultRouteForRole } from "@/lib/api"
 
 export default function LoginPage() {
   const router = useRouter()
@@ -35,13 +34,8 @@ export default function LoginPage() {
     if (!walletAddress) return
     setLoginError(null)
     try {
-      await login(walletAddress)
-      const storedRole = apiClient.getStoredUserRole()
-      if (storedRole === USER_ROLES.ADMIN) {
-        router.replace("/admin")
-        return
-      }
-      router.replace("/marketplace")
+      const currentUser = await login(walletAddress)
+      router.replace(getDefaultRouteForRole(currentUser.role))
     } catch (error) {
       setLoginError(getUserFriendlyErrorMessage(error))
     }

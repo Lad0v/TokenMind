@@ -167,11 +167,11 @@ export default function MarketplaceKysPage() {
               <Shield className="h-10 w-10 text-primary" />
             </div>
             <Badge variant="outline" className="border-primary/40 bg-primary/10 text-primary">
-              Investor KYS
+              Universal KYS
             </Badge>
             <h1 className="mt-4 text-3xl font-bold text-foreground">Верификация перед покупкой токенов</h1>
             <p className="mx-auto mt-3 max-w-2xl text-muted-foreground">
-              Один verification pipeline для marketplace-покупок: документ, selfie и адрес проживания уходят в backend review queue.
+              Верификация доступна любому авторизованному пользователю: документ, selfie и адрес проживания уходят в backend review queue.
             </p>
           </section>
 

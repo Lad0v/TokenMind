@@ -224,9 +224,7 @@ export default function ProfilePage() {
             </div>
 
             <div className="rounded-xl border border-border/70 bg-background/40 p-4 text-sm text-muted-foreground">
-              {user.role === 'investor'
-                ? 'Investor-пользователю нужен одобренный KYS перед покупкой токенов на маркетплейсе.'
-                : 'Для подачи документов и review используйте verification flow после авторизации.'}
+              Одобренный KYS/KYC используется как общий verification gate для marketplace и связанных пользовательских сценариев.
             </div>
           </CardContent>
         </Card>

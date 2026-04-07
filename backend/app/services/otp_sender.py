@@ -15,6 +15,17 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+def _string_or_default(value: object, default: str) -> str:
+    if isinstance(value, str) and value.strip():
+        return value
+    return default
+
+
+def _should_log_dev_otp(smtp_host: str, smtp_user: str, smtp_pass: str) -> bool:
+    local_hosts = {"localhost", "127.0.0.1", "mailhog", "smtp"}
+    return not smtp_user and not smtp_pass and smtp_host not in local_hosts
+
+
 def send_email_otp(to_email: str, code: str, purpose: str) -> None:
     """Send OTP via SMTP using environment variables.
 
@@ -26,17 +37,30 @@ def send_email_otp(to_email: str, code: str, purpose: str) -> None:
     Raises:
         RuntimeError: With message "EMAIL_SEND_FAILED" on any smtplib exception.
     """
-    smtp_host = settings.SMTP_HOST or "smtp.gmail.com"
+    smtp_host = _string_or_default(settings.SMTP_HOST, "smtp.gmail.com")
     smtp_port = settings.SMTP_PORT or 587
-    smtp_user = settings.SMTP_USER
-    smtp_pass = settings.SMTP_PASSWORD
+    smtp_user = _string_or_default(settings.SMTP_USER, "")
+    smtp_pass = _string_or_default(settings.SMTP_PASSWORD, "")
+    from_email = _string_or_default(
+        settings.SMTP_FROM_EMAIL,
+        smtp_user or "noreply@tokenmind.local",
+    )
+
+    if _should_log_dev_otp(smtp_host, smtp_user, smtp_pass):
+        logger.warning(
+            "SMTP credentials are not configured. OTP for %s (%s): %s",
+            to_email,
+            purpose,
+            code,
+        )
+        return
 
     subject = f"IPChain OTP – {purpose}"
     body = f"Your verification code: {code}\nExpires in 5 minutes."
 
     msg = MIMEText(body)
     msg["Subject"] = subject
-    msg["From"] = smtp_user
+    msg["From"] = from_email
     msg["To"] = to_email
 
     try:
@@ -44,7 +68,7 @@ def send_email_otp(to_email: str, code: str, purpose: str) -> None:
             server.starttls()
             if smtp_user and smtp_pass:
                 server.login(smtp_user, smtp_pass)
-            server.sendmail(smtp_user, [to_email], msg.as_string())
+            server.sendmail(from_email, [to_email], msg.as_string())
     except smtplib.SMTPException as exc:
         logger.error("SMTP error while sending OTP email: %s", exc)
         raise RuntimeError("EMAIL_SEND_FAILED") from exc

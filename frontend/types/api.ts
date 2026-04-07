@@ -113,8 +113,14 @@ export interface CurrentUserResponse {
   email: string | null;
   name: string;
   role: 'investor' | 'issuer' | 'admin';
-  status: 'active' | 'inactive' | 'blocked';
-  verification_status: string;
+  status:
+    | 'pending_otp'
+    | 'active'
+    | 'suspended'
+    | 'blocked'
+    | 'rejected'
+    | 'inactive';
+  verification_status: string | null;
 }
 
 // ============ USER TYPES ============
@@ -269,9 +275,213 @@ export interface PrecheckInternationalResponse {
   exists: boolean;
   primary_source: string;
   normalized_record: NormalizedPatentRecord;
-  recommendation: 'recommended' | 'not_recommended';
+  analytics?: Record<string, unknown>;
+  recommendation:
+    | 'recommended'
+    | 'not_recommended'
+    | 'requires_review'
+    | 'caution';
   warnings: string[];
   cached: boolean;
+}
+
+export interface PatentSearchInternationalRequest {
+  query: string;
+  countries?: string[];
+  date_from?: string;
+  date_to?: string;
+  page?: number;
+  per_page?: number;
+}
+
+export interface PatentSearchResultItem {
+  source: string;
+  source_id: string;
+  country_code: string;
+  title: string;
+  publication_date?: string | null;
+  status?: string | null;
+  assignees?: string[] | null;
+  relevance_score?: number | null;
+}
+
+export interface PatentSearchInternationalResponse {
+  total: number;
+  page: number;
+  per_page: number;
+  total_pages: number;
+  results: PatentSearchResultItem[];
+  sources_queried: string[];
+  deduplicated_count: number;
+}
+
+export type PatentEnrichmentSource =
+  | 'USPTO'
+  | 'PATENTSVIEW'
+  | 'EPO_OPS'
+  | 'WIPO_PCT';
+
+export interface EnrichIpClaimInternationalRequest {
+  force_refresh?: boolean;
+  sources?: PatentEnrichmentSource[];
+}
+
+export interface EnrichIpClaimInternationalResponse {
+  claim_id: string;
+  enriched: boolean;
+  sources_used: string[];
+  normalized_record?: NormalizedPatentRecord | null;
+  updated_fields: string[];
+  warnings: string[];
+}
+
+export interface PatentsHealthResponse {
+  status: string;
+  module: string;
+  sources: Record<string, string>;
+}
+
+// ============ ADMIN TYPES ============
+export type AdminUserStatus =
+  | 'pending_otp'
+  | 'active'
+  | 'suspended'
+  | 'blocked'
+  | 'rejected'
+  | 'inactive';
+
+export interface AdminProfileRead {
+  full_name?: string | null;
+  country?: string | null;
+  organization_name?: string | null;
+  preferred_language?: string | null;
+}
+
+export interface AdminUserResponse {
+  id: string;
+  email: string;
+  role: UserRole;
+  status: AdminUserStatus;
+  created_at: string;
+  updated_at: string;
+  profile?: AdminProfileRead | null;
+}
+
+export interface AdminUsersListParams {
+  skip?: number;
+  limit?: number;
+  role?: UserRole;
+  status?: AdminUserStatus;
+  search?: string;
+}
+
+export interface AdminUsersListResponse {
+  total: number;
+  skip: number;
+  limit: number;
+  items: AdminUserResponse[];
+}
+
+export interface AdminUserDetailResponse extends AdminUserResponse {
+  kyc_status?: string | null;
+  wallet_count: number;
+  verification_status?: string | null;
+}
+
+export interface AdminUserUpdateRequest {
+  full_name?: string;
+  country?: string;
+  organization_name?: string;
+  preferred_language?: string;
+  role?: UserRole;
+}
+
+export interface AdminUserStatusUpdateRequest {
+  status: AdminUserStatus;
+  reason: string;
+}
+
+export interface AdminUserStatusUpdateResponse {
+  success: boolean;
+  user_id: string;
+  new_status: AdminUserStatus;
+}
+
+export interface AdminUserDeleteResponse {
+  success: boolean;
+  user_id: string;
+}
+
+export type AdminPatentStatus =
+  | 'draft'
+  | 'submitted'
+  | 'under_review'
+  | 'approved'
+  | 'rejected'
+  | 'archived'
+  | 'prechecked'
+  | 'tokenized'
+  | 'minted'
+  | 'listed';
+
+export interface AdminPatentResponse {
+  id: string;
+  patent_number?: string | null;
+  jurisdiction?: string | null;
+  title: string;
+  status: AdminPatentStatus;
+  owner_user_id: string;
+  created_at: string;
+}
+
+export interface AdminPatentsListParams {
+  skip?: number;
+  limit?: number;
+  status?: AdminPatentStatus;
+  jurisdiction?: string;
+  owner_user_id?: string;
+}
+
+export interface AdminPatentsListResponse {
+  total: number;
+  skip: number;
+  limit: number;
+  items: AdminPatentResponse[];
+}
+
+export interface AdminPatentOwnerProfileRead {
+  full_name?: string | null;
+  country?: string | null;
+  organization_name?: string | null;
+}
+
+export interface AdminPatentReviewRead {
+  id: string;
+  reviewer_user_id?: string | null;
+  decision: string;
+  notes?: string | null;
+  reviewed_at: string;
+}
+
+export interface AdminPatentDetailResponse extends AdminPatentResponse {
+  owner_profile?: AdminPatentOwnerProfileRead | null;
+  documents_count: number;
+  reviews: AdminPatentReviewRead[];
+}
+
+export interface AdminPatentStatusUpdateRequest {
+  status: AdminPatentStatus;
+  notes: string;
+}
+
+export interface AdminPatentStatusUpdateResponse {
+  success: boolean;
+  patent_id: string;
+  new_status: AdminPatentStatus;
+}
+
+export interface PingResponse {
+  message: string;
 }
 
 // ============ MARKETPLACE TYPES ============

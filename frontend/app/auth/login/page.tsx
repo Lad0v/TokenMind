@@ -1,32 +1,27 @@
 "use client"
 
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { IPChainLogo } from "@/components/ipchain-logo"
 import { Loader2, Wallet, AlertCircle } from "lucide-react"
 import { useWallet } from "@/hooks/use-wallet"
-import { useLoginWithWallet } from "@/hooks/use-api"
 import { useAuth } from "@/lib/auth-context"
 import { getUserFriendlyErrorMessage } from "@/lib/error-handler"
 import { USER_ROLES } from "@/config/constants"
 
 export default function LoginPage() {
   const router = useRouter()
-  const { isAuthenticated, role } = useAuth()
+  const { isAuthenticated, role, login, isLoading: authLoading } = useAuth()
   const { walletAddress, isLoading: walletLoading, isAvailable, error: walletError, connect } = useWallet()
-  const { execute: login, loading: loginLoading, error: loginError } = useLoginWithWallet()
+  const [loginError, setLoginError] = useState<string | null>(null)
 
   // Redirect if already logged in
   useEffect(() => {
     if (isAuthenticated) {
-      if (role === USER_ROLES.INVESTOR) {
-        router.push('/investor/dashboard')
-      } else if (role === USER_ROLES.ISSUER) {
-        router.push('/issuer/dashboard')
-      } else if (role === USER_ROLES.ADMIN) {
-        router.push('/admin/dashboard')
+      if (role === USER_ROLES.ADMIN) {
+        router.push('/admin')
       } else {
         router.push('/marketplace')
       }
@@ -35,6 +30,7 @@ export default function LoginPage() {
 
   const handleWalletConnect = async () => {
     try {
+      setLoginError(null)
       await connect()
     } catch (err) {
       // Error is handled by useWallet hook
@@ -46,15 +42,16 @@ export default function LoginPage() {
     if (!walletAddress) return
 
     try {
-      const result = await login({ wallet_address: walletAddress })
-      // Redirect is handled by useLoginWithWallet hook
+      setLoginError(null)
+      await login(walletAddress)
     } catch (err) {
+      setLoginError(getUserFriendlyErrorMessage(err))
       // Error is shown to user
       console.error('Login failed:', err)
     }
   }
 
-  const isLoading = walletLoading || loginLoading
+  const isLoading = walletLoading || authLoading
   const error = walletError || loginError
   const errorMessage = error ? getUserFriendlyErrorMessage(error) : null
 

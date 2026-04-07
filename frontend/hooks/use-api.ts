@@ -45,11 +45,7 @@ export function useRegister() {
 }
 
 export function useLoginWithWallet() {
-  const router = useRouter();
-  return useApi(
-    (data: types.LoginWalletRequest) => apiClient.loginWithWallet(data),
-    () => router.push('/dashboard')
-  );
+  return useApi((data: types.LoginWalletRequest) => apiClient.loginWithWallet(data));
 }
 
 export function useSubmitPatent() {
@@ -158,4 +154,83 @@ export function usePrecheckpatentInternational() {
   return useApi((data: types.PrecheckInternationalRequest) =>
     apiClient.precheckPatentInternational(data)
   );
+}
+
+export function useSearchPatentsInternational() {
+  return useApi((data: types.PatentSearchInternationalRequest) =>
+    apiClient.searchPatentsInternational(data)
+  );
+}
+
+export function useEnrichIpClaimInternational() {
+  return useApi((claimId: string, data?: types.EnrichIpClaimInternationalRequest) =>
+    apiClient.enrichIpClaimInternational(claimId, data)
+  );
+}
+
+export function usePatentsHealth() {
+  return useApi(() => apiClient.getPatentsHealth());
+}
+
+// ============ ADMIN USERS HOOKS ============
+
+export function useAdminUsers(params?: types.AdminUsersListParams) {
+  return useApi(() => apiClient.getAdminUsers(params));
+}
+
+export function useAdminUser(userId: string) {
+  return useApi(() => apiClient.getAdminUser(userId));
+}
+
+export function useUpdateAdminUser() {
+  return useApi((userId: string, data: types.AdminUserUpdateRequest) =>
+    apiClient.updateAdminUser(userId, data)
+  );
+}
+
+export function useUpdateAdminUserStatus() {
+  return useApi((userId: string, data: types.AdminUserStatusUpdateRequest) =>
+    apiClient.updateAdminUserStatus(userId, data)
+  );
+}
+
+export function useDeleteAdminUser() {
+  return useApi((userId: string) => apiClient.deleteAdminUser(userId));
+}
+
+// ============ ADMIN PATENTS HOOKS ============
+
+export function useAdminPatents(params?: types.AdminPatentsListParams) {
+  return useApi(() => apiClient.getAdminPatents(params));
+}
+
+export function useAdminPatent(patentId: string) {
+  return useApi(() => apiClient.getAdminPatent(patentId));
+}
+
+export function useUpdateAdminPatentStatus() {
+  return useApi((patentId: string, data: types.AdminPatentStatusUpdateRequest) =>
+    apiClient.updateAdminPatentStatus(patentId, data)
+  );
+}
+
+// ============ UTILITY HOOKS ============
+
+export function usePing() {
+  return useApi(() => apiClient.ping());
+}
+
+// ============ MARKETPLACE HOOKS ============
+
+export function useMarketplaceListings(params?: {
+  skip?: number;
+  limit?: number;
+  category?: string;
+  search?: string;
+}) {
+  return useApi(() => apiClient.getMarketplaceListings(params));
+}
+
+export function useMarketplaceCategories() {
+  return useApi(() => apiClient.getMarketplaceCategories());
 }

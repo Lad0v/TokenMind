@@ -29,7 +29,8 @@ export function useWallet() {
     walletAddress: null,
     isConnected: false,
     isLoading: true,
-    isAvailable: typeof window !== 'undefined' && isWalletAvailable(),
+    // Keep SSR and the first client render identical; detect wallet availability after mount.
+    isAvailable: false,
     error: null,
   });
 
@@ -37,19 +38,21 @@ export function useWallet() {
   useEffect(() => {
     const initWallet = async () => {
       try {
+        const walletAvailable = isWalletAvailable();
         const connectedAddress = await getConnectedWalletAddress();
         setState((prev) => ({
           ...prev,
           walletAddress: connectedAddress,
           isConnected: !!connectedAddress,
           isLoading: false,
-          isAvailable: isWalletAvailable(),
+          isAvailable: walletAvailable,
         }));
       } catch (error) {
+        const walletAvailable = isWalletAvailable();
         setState((prev) => ({
           ...prev,
           isLoading: false,
-          isAvailable: isWalletAvailable(),
+          isAvailable: walletAvailable,
         }));
       }
     };
@@ -235,16 +238,30 @@ export function useWalletBalance(walletAddress: string | null) {
     setError(null);
 
     try {
-      // This would require @solana/web3.js connection
-      // For now, this is a placeholder
-      // import { Connection, PublicKey } from '@solana/web3.js';
-      // const connection = new Connection('https://api.mainnet-beta.solana.com');
-      // const publicKey = new PublicKey(walletAddress);
-      // const balance = await connection.getBalance(publicKey);
-      // setBalance(balance / 1e9); // Convert lamports to SOL
+      const response = await fetch('https://api.mainnet-beta.solana.com', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'getBalance',
+          params: [walletAddress],
+        }),
+      });
 
-      // Placeholder
-      setBalance(0);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch balance: ${response.status}`);
+      }
+
+      const payload = await response.json();
+      const lamports = payload?.result?.value;
+      if (typeof lamports !== 'number') {
+        throw new Error('Invalid balance response');
+      }
+
+      setBalance(lamports / 1_000_000_000);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : 'Failed to fetch balance'

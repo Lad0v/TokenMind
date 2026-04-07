@@ -1,152 +1,230 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
-import { ArrowRightLeft, Clock3, Coins, LineChart as LineChartIcon, RefreshCcw } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  Line,
-  LineChart,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
+  Activity,
+  AlertCircle,
+  BarChart3,
+  Coins,
+  Layers3,
+  RefreshCcw,
+  Wallet,
+} from 'lucide-react';
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
-  initialTokenHoldings,
-  initialTokenTransactions,
-  pulseTokenHoldings,
-  type TokenHolding,
-  type TokenTransaction,
-} from '@/lib/investor-dashboard-data';
+  useCurrentUser,
+  useIpClaims,
+  useMarketplaceCategories,
+  useMarketplaceListings,
+} from '@/hooks/use-api';
+import { useWallet, useWalletBalance } from '@/hooks/use-wallet';
+import { getUserFriendlyErrorMessage } from '@/lib/error-handler';
+import { formatWalletAddress } from '@/lib/wallet-helper';
 
-const projectionByMonth = [
-  { month: 'May', dividend: 3.1 },
-  { month: 'Jun', dividend: 3.8 },
-  { month: 'Jul', dividend: 4.2 },
-  { month: 'Aug', dividend: 4.7 },
-  { month: 'Sep', dividend: 5.1 },
-];
+const CLAIM_FLOW_STATUSES = ['draft', 'submitted', 'prechecked', 'under_review', 'approved', 'rejected'] as const;
 
-const buybackOptions = [
-  { type: 'Мгновенный выкуп', premium: '+4.5%', eta: 'T+1' },
-  { type: 'Аукцион выкупа', premium: '+8.2%', eta: 'T+3' },
-  { type: 'Гибридный выкуп', premium: '+6.1%', eta: 'T+2' },
-];
+function statusBadge(status: string) {
+  if (status === 'approved' || status === 'active') return 'text-emerald-300 border-emerald-500/30 bg-emerald-500/10';
+  if (status === 'rejected' || status === 'blocked') return 'text-red-300 border-red-500/30 bg-red-500/10';
+  return 'text-amber-300 border-amber-500/30 bg-amber-500/10';
+}
 
-const actionColor: Record<TokenTransaction['action'], string> = {
-  buy: 'text-emerald-300',
-  buyback: 'text-amber-300',
-  dividend: 'text-sky-300',
-};
+function parsePriceToSol(price: string) {
+  const numeric = Number.parseFloat((price || '').replace(/[^0-9.,-]/g, '').replace(',', '.'));
+  return Number.isFinite(numeric) ? numeric : 0;
+}
 
-export default function ActiveTokensPage() {
-  const [holdings, setHoldings] = useState<TokenHolding[]>(initialTokenHoldings);
-  const [transactions] = useState<TokenTransaction[]>(initialTokenTransactions);
-  const [lastSync, setLastSync] = useState<Date>(new Date());
+export default function InvestorInvestmentsPage() {
+  const { data: currentUser, execute: loadCurrentUser, loading: currentUserLoading } = useCurrentUser();
+  const { data: claimsData, execute: loadClaims, loading: claimsLoading } = useIpClaims({ skip: 0, limit: 50 });
+  const { data: listingsData, execute: loadListings, loading: listingsLoading } = useMarketplaceListings({
+    skip: 0,
+    limit: 8,
+  });
+  const { data: categoriesData, execute: loadCategories } = useMarketplaceCategories();
+
+  const wallet = useWallet();
+  const {
+    balance: solBalance,
+    loading: solBalanceLoading,
+    refresh: refreshSolBalance,
+  } = useWalletBalance(wallet.walletAddress);
+
+  const [lastSync, setLastSync] = useState<Date | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+
+  const claims = claimsData?.items || [];
+  const listings = listingsData?.items || [];
+  const categories = categoriesData?.categories || [];
+
+  const refreshAll = useCallback(async () => {
+    setSyncError(null);
+    try {
+      await Promise.all([
+        loadCurrentUser(),
+        loadClaims(),
+        loadListings(),
+        loadCategories(),
+        wallet.walletAddress ? refreshSolBalance() : Promise.resolve(),
+      ]);
+      setLastSync(new Date());
+    } catch (error) {
+      setSyncError(getUserFriendlyErrorMessage(error));
+    }
+  }, [loadCurrentUser, loadClaims, loadListings, loadCategories, wallet.walletAddress, refreshSolBalance]);
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      setHoldings((prev) => pulseTokenHoldings(prev));
-      setLastSync(new Date());
-    }, 5000);
+    void refreshAll();
+  }, [refreshAll]);
 
-    return () => clearInterval(timer);
-  }, []);
+  const handleWalletAction = useCallback(async () => {
+    try {
+      if (wallet.isConnected) {
+        await wallet.disconnect();
+        return;
+      }
+      await wallet.connect();
+      await refreshSolBalance();
+    } catch (error) {
+      setSyncError(getUserFriendlyErrorMessage(error));
+    }
+  }, [wallet, refreshSolBalance]);
 
-  const totalCurrentValue = useMemo(
-    () => holdings.reduce((sum, item) => sum + item.quantity * item.marketPriceSOL, 0),
-    [holdings],
-  );
+  const activeClaims = claims.filter((claim) =>
+    ['submitted', 'prechecked', 'under_review'].includes(claim.status)
+  ).length;
+  const listedValueSol = listings.reduce((sum, listing) => sum + parsePriceToSol(listing.price), 0);
 
-  const totalProjectedDividends = useMemo(
-    () => holdings.reduce((sum, item) => sum + item.projectedDividendSOL, 0),
-    [holdings],
-  );
+  const flowData = useMemo(() => {
+    const counts = claims.reduce<Record<string, number>>((acc, claim) => {
+      acc[claim.status] = (acc[claim.status] || 0) + 1;
+      return acc;
+    }, {});
 
-  const allocation = useMemo(
-    () =>
-      holdings.map((item) => ({
-        name: item.asset,
-        value: Number((item.quantity * item.marketPriceSOL).toFixed(2)),
-      })),
-    [holdings],
-  );
+    return CLAIM_FLOW_STATUSES.map((status) => ({
+      status,
+      count: counts[status] || 0,
+    }));
+  }, [claims]);
 
-  const pnlBars = useMemo(
-    () =>
-      holdings.map((item) => ({
-        token: item.id,
-        pnl: Number(((item.marketPriceSOL - item.avgBuyPriceSOL) * item.quantity).toFixed(2)),
-      })),
-    [holdings],
-  );
+  const globalLoading =
+    currentUserLoading || claimsLoading || listingsLoading || wallet.isLoading || solBalanceLoading;
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-8 pb-24">
       <section className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <p className="text-xs uppercase tracking-[0.22em] font-tech" style={{ color: 'var(--accent)' }}>
-            Investor Tokens
+            Investor Hub
           </p>
-          <h1 className="text-4xl font-elegant">Активные токены</h1>
+          <h1 className="text-4xl font-elegant">Investments and Opportunities</h1>
           <p className="mt-2 text-sm" style={{ color: 'var(--text-secondary)' }}>
-            Покупки, выкуп, дивиденды и транзакционная активность по токенизированным IP-активам.
+            Connected view of your backend claims, marketplace feed, and Solana wallet.
           </p>
         </div>
 
-        <div className="flex gap-2 flex-wrap">
-          <Link href="/investor/profile">
-            <Button variant="outline">Профиль</Button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Link href="/profile">
+            <Button variant="outline">Profile</Button>
           </Link>
-          <Link href="/investor/portfolio">
-            <Button variant="outline">Портфель</Button>
-          </Link>
-          <Button variant="outline" className="gap-2">
-            <RefreshCcw size={15} />
-            {lastSync.toLocaleTimeString('ru-RU')}
+          <Button onClick={() => void refreshAll()} variant="outline" className="gap-2" disabled={globalLoading}>
+            <RefreshCcw size={15} className={globalLoading ? 'animate-spin' : ''} />
+            Refresh
           </Button>
+          <div
+            className="text-xs px-3 py-2 rounded-xl border"
+            style={{ borderColor: 'var(--border-color)', color: 'var(--text-muted)' }}
+          >
+            Synced: {lastSync ? lastSync.toLocaleTimeString('en-US') : '--:--:--'}
+          </div>
         </div>
       </section>
+
+      {(syncError || wallet.error) && (
+        <Card className="p-4 border-red-500/30 bg-red-500/10">
+          <div className="flex items-start gap-3 text-red-200">
+            <AlertCircle size={16} className="mt-0.5" />
+            <p className="text-sm">{syncError || wallet.error}</p>
+          </div>
+        </Card>
+      )}
 
       <section className="grid sm:grid-cols-2 xl:grid-cols-4 gap-4">
-        <MetricCard label="Total Token Value" value={`${totalCurrentValue.toFixed(2)} SOL`} icon={Coins} />
-        <MetricCard label="Projected Dividends" value={`${totalProjectedDividends.toFixed(2)} SOL`} icon={LineChartIcon} />
-        <MetricCard label="Holdings" value={`${holdings.length}`} icon={ArrowRightLeft} />
-        <MetricCard label="Realtime Window" value="5 sec" icon={Clock3} />
+        <MetricCard
+          label="Wallet SOL"
+          value={wallet.isConnected ? `${(solBalance ?? 0).toFixed(4)} SOL` : 'Not connected'}
+          note={wallet.walletAddress ? formatWalletAddress(wallet.walletAddress, 4) : 'Phantom disconnected'}
+          icon={Wallet}
+        />
+        <MetricCard
+          label="Marketplace Listings"
+          value={`${listingsData?.total ?? listings.length}`}
+          note={`${categories.length} categories`}
+          icon={Layers3}
+        />
+        <MetricCard
+          label="Claim Pipeline"
+          value={`${claims.length}`}
+          note={`${activeClaims} active now`}
+          icon={Activity}
+        />
+        <MetricCard
+          label="Visible SOL Value"
+          value={`${listedValueSol.toFixed(2)} SOL`}
+          note="sum of current listing prices"
+          icon={Coins}
+        />
       </section>
 
       <section className="grid xl:grid-cols-3 gap-4">
         <Card className="xl:col-span-2 p-6">
-          <h2 className="text-2xl font-elegant mb-4">Приобретенные токены</h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-2xl font-elegant">Marketplace Feed</h2>
+            <Link href="/marketplace">
+              <Button variant="outline" size="sm">
+                Open Marketplace
+              </Button>
+            </Link>
+          </div>
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Token</TableHead>
-                <TableHead>Quantity</TableHead>
-                <TableHead>Avg Buy</TableHead>
-                <TableHead>Market</TableHead>
-                <TableHead>Dividends</TableHead>
-                <TableHead>Buyback Window</TableHead>
+                <TableHead>Title</TableHead>
+                <TableHead>Category</TableHead>
+                <TableHead>Price</TableHead>
+                <TableHead>Supply</TableHead>
+                <TableHead>Status</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {holdings.map((token) => (
-                <TableRow key={token.id}>
-                  <TableCell className="font-medium">{token.asset}</TableCell>
-                  <TableCell>{token.quantity}</TableCell>
-                  <TableCell>{token.avgBuyPriceSOL.toFixed(2)} SOL</TableCell>
-                  <TableCell>{token.marketPriceSOL.toFixed(2)} SOL</TableCell>
-                  <TableCell className="text-emerald-300">{token.projectedDividendSOL.toFixed(2)} SOL</TableCell>
-                  <TableCell>{token.buybackWindow}</TableCell>
+              {listings.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={5} className="text-center py-8" style={{ color: 'var(--text-secondary)' }}>
+                    No listings yet from backend.
+                  </TableCell>
+                </TableRow>
+              )}
+              {listings.map((listing) => (
+                <TableRow key={listing.id}>
+                  <TableCell className="font-medium">
+                    <Link href={`/marketplace/${listing.id}`} className="hover:underline">
+                      {listing.title}
+                    </Link>
+                  </TableCell>
+                  <TableCell>{listing.category}</TableCell>
+                  <TableCell>{listing.price}</TableCell>
+                  <TableCell>
+                    {listing.availableTokens}/{listing.totalTokens}
+                  </TableCell>
+                  <TableCell>
+                    <span className={`inline-flex rounded-full border px-2 py-0.5 text-xs ${statusBadge(listing.status)}`}>
+                      {listing.status}
+                    </span>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -154,91 +232,33 @@ export default function ActiveTokensPage() {
         </Card>
 
         <Card className="p-6">
-          <h2 className="text-2xl font-elegant mb-4">Варианты выкупа</h2>
-          <div className="space-y-3">
-            {buybackOptions.map((option) => (
-              <div
-                key={option.type}
-                className="rounded-xl border px-3 py-3"
-                style={{ borderColor: 'rgba(52, 211, 153, 0.2)', background: 'rgba(52, 211, 153, 0.06)' }}
-              >
-                <p className="font-medium">{option.type}</p>
-                <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
-                  Premium: {option.premium} • Settlement: {option.eta}
-                </p>
-                <Button variant="secondary" size="sm" className="mt-3 w-full">
-                  Запросить
-                </Button>
-              </div>
-            ))}
+          <h2 className="text-2xl font-elegant mb-4">Wallet Control</h2>
+          <div className="space-y-3 text-sm">
+            <InfoRow label="User" value={currentUser?.email || 'unknown'} />
+            <InfoRow label="Role" value={currentUser?.role || 'n/a'} />
+            <InfoRow label="Wallet" value={wallet.walletAddress ? formatWalletAddress(wallet.walletAddress, 4) : 'not connected'} />
+            <InfoRow label="Network" value="Solana Mainnet" />
+            <InfoRow label="Balance" value={wallet.isConnected ? `${(solBalance ?? 0).toFixed(4)} SOL` : '--'} />
           </div>
+          <Button onClick={handleWalletAction} className="mt-6 w-full gap-2">
+            <Wallet size={15} />
+            {wallet.isConnected ? 'Disconnect Wallet' : 'Connect Phantom'}
+          </Button>
         </Card>
       </section>
 
       <section className="grid xl:grid-cols-3 gap-4">
         <Card className="xl:col-span-2 p-6">
-          <h2 className="text-2xl font-elegant mb-4">История транзакций</h2>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>ID</TableHead>
-                <TableHead>Token</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>Amount</TableHead>
-                <TableHead>Date</TableHead>
-                <TableHead>Hash</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {transactions.map((tx) => (
-                <TableRow key={tx.id}>
-                  <TableCell>{tx.id}</TableCell>
-                  <TableCell>{tx.tokenId}</TableCell>
-                  <TableCell className={actionColor[tx.action]}>{tx.action.toUpperCase()}</TableCell>
-                  <TableCell>{tx.amountSOL.toFixed(2)} SOL</TableCell>
-                  <TableCell>{tx.date}</TableCell>
-                  <TableCell>{tx.txHash}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </Card>
-
-        <Card className="p-6">
-          <h2 className="text-2xl font-elegant mb-4">Структура портфеля</h2>
-          <div className="h-64">
+          <h2 className="text-2xl font-elegant mb-2">Claim Status Distribution</h2>
+          <p className="text-sm mb-4" style={{ color: 'var(--text-secondary)' }}>
+            Live distribution from backend `ip-claims`.
+          </p>
+          <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={allocation} dataKey="value" nameKey="name" innerRadius={50} outerRadius={85}>
-                  {allocation.map((entry, index) => (
-                    <Cell
-                      key={entry.name}
-                      fill={['#34d399', '#38bdf8', '#a78bfa', '#f59e0b'][index % 4]}
-                    />
-                  ))}
-                </Pie>
-                <Tooltip
-                  contentStyle={{
-                    borderRadius: 12,
-                    background: 'rgba(10, 16, 12, 0.95)',
-                    border: '1px solid rgba(52, 211, 153, 0.2)',
-                  }}
-                />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
-      </section>
-
-      <section className="grid lg:grid-cols-2 gap-4">
-        <Card className="p-6">
-          <h2 className="text-2xl font-elegant mb-4">Прогноз дивидендов</h2>
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={projectionByMonth}>
+              <BarChart data={flowData}>
                 <CartesianGrid strokeDasharray="4 4" stroke="rgba(255,255,255,0.08)" />
-                <XAxis dataKey="month" />
-                <YAxis />
+                <XAxis dataKey="status" />
+                <YAxis allowDecimals={false} />
                 <Tooltip
                   contentStyle={{
                     borderRadius: 12,
@@ -246,30 +266,39 @@ export default function ActiveTokensPage() {
                     border: '1px solid rgba(52, 211, 153, 0.2)',
                   }}
                 />
-                <Line type="monotone" dataKey="dividend" stroke="#34d399" strokeWidth={2} dot={{ r: 4 }} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
-
-        <Card className="p-6">
-          <h2 className="text-2xl font-elegant mb-4">PnL по токенам</h2>
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={pnlBars}>
-                <CartesianGrid strokeDasharray="4 4" stroke="rgba(255,255,255,0.08)" />
-                <XAxis dataKey="token" />
-                <YAxis />
-                <Tooltip
-                  contentStyle={{
-                    borderRadius: 12,
-                    background: 'rgba(10, 16, 12, 0.95)',
-                    border: '1px solid rgba(52, 211, 153, 0.2)',
-                  }}
-                />
-                <Bar dataKey="pnl" radius={[8, 8, 0, 0]} fill="#34d399" />
+                <Bar dataKey="count" fill="#34d399" radius={[8, 8, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
+          </div>
+        </Card>
+
+        <Card className="p-6">
+          <h2 className="text-2xl font-elegant mb-4">Recent Claim Events</h2>
+          <div className="space-y-3">
+            {claims.length === 0 && (
+              <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+                No claims yet. Submit a patent to see your workflow here.
+              </p>
+            )}
+            {claims
+              .slice()
+              .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
+              .slice(0, 5)
+              .map((claim) => (
+                <div
+                  key={claim.id}
+                  className="rounded-xl border px-3 py-3"
+                  style={{ borderColor: 'rgba(52, 211, 153, 0.2)', background: 'rgba(52, 211, 153, 0.05)' }}
+                >
+                  <p className="text-sm font-medium">{claim.patent_title || claim.patent_number}</p>
+                  <p className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>
+                    Updated {claim.updated_at.slice(0, 10)}
+                  </p>
+                  <span className={`mt-2 inline-flex rounded-full border px-2 py-0.5 text-xs ${statusBadge(claim.status)}`}>
+                    {claim.status}
+                  </span>
+                </div>
+              ))}
           </div>
         </Card>
       </section>
@@ -280,10 +309,12 @@ export default function ActiveTokensPage() {
 function MetricCard({
   label,
   value,
+  note,
   icon: Icon,
 }: {
   label: string;
   value: string;
+  note: string;
   icon: React.ComponentType<{ size?: number; className?: string }>;
 }) {
   return (
@@ -295,6 +326,18 @@ function MetricCard({
         <Icon size={16} className="text-emerald-400" />
       </div>
       <p className="text-3xl mt-2 font-elegant">{value}</p>
+      <p className="text-xs mt-2" style={{ color: 'var(--text-secondary)' }}>
+        {note}
+      </p>
     </Card>
+  );
+}
+
+function InfoRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span style={{ color: 'var(--text-secondary)' }}>{label}</span>
+      <span className="font-medium text-right">{value}</span>
+    </div>
   );
 }

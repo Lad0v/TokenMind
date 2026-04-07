@@ -335,6 +335,119 @@ class ApiClient {
     return response.data;
   }
 
+  async searchPatentsInternational(
+    data: types.PatentSearchInternationalRequest
+  ): Promise<types.PatentSearchInternationalResponse> {
+    const response = await this.axiosInstance.post<types.PatentSearchInternationalResponse>(
+      '/patents/search/international',
+      data
+    );
+    return response.data;
+  }
+
+  async enrichIpClaimInternational(
+    claimId: string,
+    data: types.EnrichIpClaimInternationalRequest = {}
+  ): Promise<types.EnrichIpClaimInternationalResponse> {
+    const response = await this.axiosInstance.post<types.EnrichIpClaimInternationalResponse>(
+      `/patents/ip-claims/${claimId}/enrich/international`,
+      data
+    );
+    return response.data;
+  }
+
+  async getPatentsHealth(): Promise<types.PatentsHealthResponse> {
+    const response = await this.axiosInstance.get<types.PatentsHealthResponse>(
+      '/patents/health'
+    );
+    return response.data;
+  }
+
+  // ============ ADMIN USERS ENDPOINTS ============
+
+  async getAdminUsers(
+    params?: types.AdminUsersListParams
+  ): Promise<types.AdminUsersListResponse> {
+    const response = await this.axiosInstance.get<types.AdminUsersListResponse>(
+      '/users',
+      { params }
+    );
+    return response.data;
+  }
+
+  async getAdminUser(userId: string): Promise<types.AdminUserDetailResponse> {
+    const response = await this.axiosInstance.get<types.AdminUserDetailResponse>(
+      `/users/${userId}`
+    );
+    return response.data;
+  }
+
+  async updateAdminUser(
+    userId: string,
+    data: types.AdminUserUpdateRequest
+  ): Promise<types.AdminUserResponse> {
+    const response = await this.axiosInstance.put<types.AdminUserResponse>(
+      `/users/${userId}`,
+      data
+    );
+    return response.data;
+  }
+
+  async updateAdminUserStatus(
+    userId: string,
+    data: types.AdminUserStatusUpdateRequest
+  ): Promise<types.AdminUserStatusUpdateResponse> {
+    const response = await this.axiosInstance.put<types.AdminUserStatusUpdateResponse>(
+      `/users/${userId}/status`,
+      data
+    );
+    return response.data;
+  }
+
+  async deleteAdminUser(userId: string): Promise<types.AdminUserDeleteResponse> {
+    const response = await this.axiosInstance.delete<types.AdminUserDeleteResponse>(
+      `/users/${userId}`
+    );
+    return response.data;
+  }
+
+  // ============ ADMIN PATENTS ENDPOINTS ============
+
+  async getAdminPatents(
+    params?: types.AdminPatentsListParams
+  ): Promise<types.AdminPatentsListResponse> {
+    const response = await this.axiosInstance.get<types.AdminPatentsListResponse>(
+      '/admin/patents',
+      { params }
+    );
+    return response.data;
+  }
+
+  async getAdminPatent(patentId: string): Promise<types.AdminPatentDetailResponse> {
+    const response = await this.axiosInstance.get<types.AdminPatentDetailResponse>(
+      `/admin/patents/${patentId}`
+    );
+    return response.data;
+  }
+
+  async updateAdminPatentStatus(
+    patentId: string,
+    data: types.AdminPatentStatusUpdateRequest
+  ): Promise<types.AdminPatentStatusUpdateResponse> {
+    const response = await this.axiosInstance.put<types.AdminPatentStatusUpdateResponse>(
+      `/admin/patents/${patentId}/status`,
+      data
+    );
+    return response.data;
+  }
+
+  // ============ UTILITY ENDPOINTS ============
+
+  async ping(): Promise<types.PingResponse> {
+    const response = await this.axiosInstance.get<types.PingResponse>('/ping');
+    return response.data;
+  }
+
   // ============ MARKETPLACE ENDPOINTS ============
 
   async getMarketplaceListings(params?: {

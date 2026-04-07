@@ -1,12 +1,12 @@
 {
-  "name": "my-project",
+  "name": "verimint-frontend",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint ../../AppData/Local/Temp/Rar$DRa26140.18692"
+    "lint": "tsc --noEmit"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",
@@ -37,9 +37,10 @@
     "@radix-ui/react-toggle": "1.1.10",
     "@radix-ui/react-toggle-group": "1.1.11",
     "@radix-ui/react-tooltip": "1.2.8",
+    "@solana/web3.js": "^1.98.4",
     "@vercel/analytics": "1.6.1",
     "autoprefixer": "^10.4.20",
-    "axios": "^1.14.0",
+    "bs58": "^6.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "1.1.1",

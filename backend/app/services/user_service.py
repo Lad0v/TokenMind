@@ -246,9 +246,10 @@ class UserService:
             select(VerificationCase)
             .where(VerificationCase.user_id == user_id)
             .order_by(VerificationCase.created_at.desc())
+            .limit(1)
         )
         result = await db.execute(stmt)
-        return result.scalar_one_or_none()
+        return result.scalars().first()
 
     @staticmethod
     async def create_verification_case(

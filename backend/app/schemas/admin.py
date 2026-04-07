@@ -69,10 +69,10 @@ class UserAdminDetailResponse(UserAdminResponse):
 
 class UserAdminUpdateRequest(BaseModel):
     """Request body for updating user by admin."""
-    full_name: Optional[str] = None
-    country: Optional[str] = None
-    organization_name: Optional[str] = None
-    preferred_language: Optional[str] = None
+    full_name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    country: Optional[str] = Field(default=None, min_length=2, max_length=3)
+    organization_name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    preferred_language: Optional[str] = Field(default=None, min_length=2, max_length=5)
     role: Optional[UserRole] = None
 
 

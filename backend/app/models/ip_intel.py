@@ -150,7 +150,7 @@ class PatentSearchCache(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     
     # Хэш запроса для дедупликации
-    query_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    query_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     query_text: Mapped[str] = mapped_column(Text, nullable=False)
     
     # Параметры поиска
